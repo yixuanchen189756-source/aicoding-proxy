@@ -2,180 +2,96 @@
 
 Language / 语言: English | [简体中文](README.zh-CN.md)
 
-This directory contains the deployable proxy package for collecting trajectories
-from multiple coding agents while routing their LLM requests to configured
-upstream model providers.
+AI Coding Proxy is a small, file-oriented proxy package for collecting coding-agent trajectories while routing model requests to configured upstream LLM providers.
 
-The project is intentionally small and file-oriented: runtime configuration
-lives in `config.yaml`, per-agent hooks/plugins live under `config/`, and the
-proxy writes JSON trajectories to disk. Each agent integration uses the lightest
-stable extension point available in that client.
+It is designed for four agent families:
 
-## Goals
+| Agent | Entrypoint | Port | Client protocol | Trajectory root |
+| --- | --- | ---: | --- | --- |
+| OpenCode | `opencode_proxy.py` | `8905` | OpenAI-compatible | `traces/opencode` |
+| Claude Code | `claude_code_proxy.py` | `8906` | Anthropic Messages | `traces/claude-code` |
+| Hermes | `hermes_proxy.py` | `8907` | OpenAI-compatible | `traces/hermes` |
+| OpenClaw | `openclaw_proxy.py` | `8908` | OpenAI-compatible gateway | `traces/openclaw` |
 
-The proxy is designed to:
+The proxy does not replace those agents. It sits between each agent and the upstream model provider so requests can be attributed to the right session, workspace, run, and agent.
 
-- serve several coding-agent clients from one codebase
-- route each agent to the correct upstream model backend
-- attach stable session/workspace/run metadata to stored trajectories
-- keep each agent's trajectories in separate folders for filtering, inspection,
-  training, and replay
+## Mental Model
 
-The proxy does not replace OpenCode, Claude Code, Hermes, or OpenClaw. It sits
-between the agents and upstream model providers, preserving normal agent
-behavior while adding routing, traceability, and storage.
+Question:
+  Why does this package exist?
 
-## Directory Layout
+Model:
+  agent request + stable headers + proxy profile = replayable trajectory
+
+Flow:
+
+```text
+Coding agent
+  -> agent-specific headers/hooks/plugins
+  -> dedicated proxy port
+  -> configured upstream backend
+  -> per-agent trajectory files
+```
+
+Rule:
+  each agent owns its own process, port, request shape, and trajectory folder.
+
+This separation is intentional. OpenCode, Claude Code, Hermes, and OpenClaw expose different extension points, so the proxy keeps their integration logic separate while sharing backend configuration and trajectory conventions.
+
+## Repository Layout
 
 ```text
 proxy/
   agent_proxy_core.py
-    Shared proxy core for OpenCode, Claude Code, and Hermes. The independent
-    entrypoint scripts below import this file and select one profile each.
+    Shared FastAPI core for OpenCode, Claude Code, and Hermes.
+    This is not a startup script.
 
   opencode_proxy.py
   claude_code_proxy.py
   hermes_proxy.py
-    Independent single-agent entrypoints for OpenCode, Claude Code, and Hermes.
-    Each registers only the routes needed by that coding agent.
+    Thin entrypoints that select exactly one profile from config.yaml.
 
   openclaw_proxy.py
-    OpenClaw-specific proxy logic. Handles OpenClaw gateway registration,
-    instance routing, token registries, OpenClaw internal-message handling, and
-    OpenClaw trajectory cleanup. Reads OpenClaw runtime settings from
-    config.yaml.
+    OpenClaw-specific proxy with gateway registration and instance routing.
 
   config.yaml
-    Main runtime configuration for model backends, agent profiles, OpenClaw
-    runtime settings, authentication, metrics, tracing, and usage storage.
+    Runtime configuration for upstream backends, agent profiles, auth, tracing,
+    usage files, and OpenClaw settings.
 
   config/
     opencode/
-      OpenCode plugin and documentation.
-
     claude-code/
-      Claude Code hook scripts and documentation.
-
     hermes/
-      Hermes integration documentation.
-
     openclaw/
-      OpenClaw extensions, skills, workspace templates, and documentation.
+      Agent-specific plugins, hooks, scripts, and setup guides.
 ```
 
-Unless paths in `config.yaml` are absolute, runtime output is written relative to
-the process working directory:
+There is intentionally no `client.py` entrypoint. Use the dedicated scripts above.
 
-```text
-traces/
-  opencode/
-  claude-code/
-  hermes/
-  openclaw/
+## Requirements
 
-usage/
-  opencode/
-  claude-code/
-  hermes/
-```
+- Python 3.10+
+- Network access from the proxy host to your configured upstream model providers
+- One configured upstream backend in `config.yaml`
+- Agent-specific header injection:
+  - OpenCode: plugin hook
+  - Claude Code: wrapper environment + session hook
+  - Hermes: request `extra_headers` patch
+  - OpenClaw: extension + gateway registration
 
-## Proxy Components
-
-### Shared Core and Independent Entrypoints
-
-[agent_proxy_core.py](agent_proxy_core.py) is the shared proxy core for
-OpenCode, Claude Code, and Hermes. It is not an entrypoint. Start one of the
-independent entrypoint scripts instead:
+Install Python dependencies:
 
 ```bash
-python opencode_proxy.py
-python claude_code_proxy.py
-python hermes_proxy.py
+pip install fastapi uvicorn aiohttp pyyaml prometheus-client
 ```
 
-Each entrypoint imports `agent_proxy_core.py`, selects exactly one profile from
-[config.yaml](config.yaml), and creates an app with only the routes needed by
-that coding agent. This keeps the runtime surface small and makes it clear which
-process owns which agent.
+## Configuration
 
-Current main profiles:
+Runtime configuration lives in [config.yaml](config.yaml).
 
-| Agent | Port | Client protocol | Upstream handling | Trace directory |
-| --- | ---: | --- | --- | --- |
-| OpenCode | `8905` | OpenAI-compatible | Direct OpenAI-format routing | `traces/opencode` |
-| Claude Code | `8906` | Anthropic Messages | Anthropic-to-OpenAI conversion when needed | `traces/claude-code` |
-| Hermes | `8907` | OpenAI-compatible | Direct OpenAI-format routing | `traces/hermes` |
+### Backends
 
-There is intentionally no `client.py` entrypoint in this package. The split
-scripts are the supported deployment mode.
-
-### openclaw_proxy.py
-
-[openclaw_proxy.py](openclaw_proxy.py) is the OpenClaw-specific proxy. It reads
-the top-level `openclaw` section from [config.yaml](config.yaml), then uses that
-configuration for the listener port, upstream backend, and trajectory directory.
-It does not use `agent_proxy_core.py` because OpenClaw has its own gateway and
-instance model.
-
-OpenClaw-specific handling includes:
-
-- `X-Instance-Id`
-- gateway URL/token registration
-- `gateway_instances.json`
-- `gateway_tokens.json`
-- OpenClaw internal-message filtering
-- OpenClaw session/task trajectory cleanup
-
-Start it through:
-
-```bash
-python openclaw_proxy.py
-```
-
-## Exposed Routes
-
-Independent entrypoints expose only the routes that their agent actually needs.
-
-OpenCode and Hermes:
-
-- `GET /`
-- `HEAD /`
-- `GET /health`
-- `GET /v1/models`
-- `/v1/{path:path}`
-
-Claude Code:
-
-- `GET /`
-- `HEAD /`
-- `GET /health`
-- `GET /v1/models`
-- `/v1/{path:path}`
-- `POST /_agent/session-event`
-
-The independent profile entrypoints intentionally do not expose broad debug or
-management routes such as:
-
-- `GET /backends`
-- `GET /usage`
-- `GET /metrics`
-
-## Configuration Model
-
-`config.yaml` is organized around:
-
-- `backends`
-- `profiles`
-- `openclaw`
-- `auth` / `metrics` / `proxy`
-
-### backends
-
-`backends` define upstream model providers. A backend can contain one or more
-endpoints, optional model mapping, endpoint-specific API keys, OpenAI-format
-URLs, and extra request headers.
-
-Example:
+`backends` describe upstream model providers. Use environment-variable placeholders for real credentials:
 
 ```yaml
 backends:
@@ -183,24 +99,17 @@ backends:
     base_url: "https://provider.example.com"
     api_key: "${MY_BACKEND_API_KEY}"
     timeout_s: 600
-    max_retries: 1
-    retry_delay_s: 0.5
     endpoints:
       - url: "https://provider.example.com"
         model: "provider-model-name"
         openai_url: "https://provider.example.com"
-        extra_headers:
-          User-Agent: "claude-code/2.1.888"
-    load_balance: "least_connections"
 ```
 
-Do not commit real upstream API keys. Use placeholders, environment expansion,
-or a private deployment copy of `config.yaml`.
+Do not commit real paid-provider API keys. Local secrets belong in `.env` or your deployment environment.
 
-### profiles
+### Profiles
 
-`profiles` bind agent names to listener ports, protocols, backends, and trace
-paths.
+`profiles` bind the three shared-core agents to ports, protocols, backends, and output paths:
 
 ```yaml
 profiles:
@@ -226,14 +135,11 @@ profiles:
     usage_json: "usage/hermes/usage.json"
 ```
 
-Startup validates the required coding-agent profiles. Invalid profiles are
-disabled with clear warnings. If all of `opencode`, `claude-code`, and `hermes`
-are unusable, the process exits.
+Invalid profiles are disabled with clear startup warnings. If no requested profile has a valid backend, the process exits.
 
-### openclaw
+### OpenClaw
 
-OpenClaw is not in `profiles` because it is handled directly by
-`openclaw_proxy.py`, not by the shared profile core.
+OpenClaw uses its own top-level block because it does not use `agent_proxy_core.py`:
 
 ```yaml
 openclaw:
@@ -242,38 +148,9 @@ openclaw:
   session_dir: "traces/openclaw"
 ```
 
-Fields:
+## Run Locally
 
-- `port`: listener port for `openclaw_proxy.py`
-- `backend`: upstream backend name; must exist in `backends`
-- `session_dir`: OpenClaw trajectory directory
-
-### proxy
-
-```yaml
-proxy:
-  connect_timeout_s: 10
-  stream_chunk_size: 8192
-  debug: false
-  trace: false
-  usage_json: "usage.json"
-```
-
-- `debug`: prints routing, upstream errors, and retry diagnostics.
-- `trace`: prints request/response summaries to stderr.
-- `session_json`: legacy trace storage path; profile `session_dir` is preferred.
-- `usage_json`: legacy usage storage path; profile `usage_json` is preferred.
-
-## Starting the Proxies
-
-Install Python dependencies:
-
-```bash
-pip install fastapi uvicorn aiohttp pyyaml prometheus-client
-```
-
-Recommended: start the four proxies as separate processes. Each script owns one
-agent and one configured port.
+Start each proxy in its own terminal or process manager:
 
 ```bash
 cd proxy
@@ -283,10 +160,7 @@ python hermes_proxy.py
 python openclaw_proxy.py
 ```
 
-There is no combined `client.py` startup path. OpenClaw is always started
-through `openclaw_proxy.py`; it is not part of the shared profile router.
-
-Quick checks:
+Health checks:
 
 ```bash
 curl http://127.0.0.1:8905/health
@@ -295,21 +169,18 @@ curl http://127.0.0.1:8907/health
 curl http://127.0.0.1:8908/health
 ```
 
-If the proxy runs on another machine, replace `127.0.0.1` with that host or
-tailnet IP.
+If the proxy runs on another machine, replace `127.0.0.1` with the proxy host or tailnet IP.
 
-## Agent Integrations
+## Agent Setup
 
 ### OpenCode
 
-OpenCode uses the plugin in
-[config/opencode/rl-training-headers](config/opencode/rl-training-headers).
+OpenCode uses `config/opencode/rl-training-headers`, which injects:
 
-The plugin uses OpenCode's native `chat.headers` hook. Before each LLM request,
-it injects:
-
-- `X-Session-Id: <userName>_<sessionID>`
-- `X-Turn-Type: main|side`
+```text
+X-Session-Id: <userName>_<sessionID>
+X-Turn-Type: main|side
+```
 
 Point OpenCode's OpenAI-compatible provider at:
 
@@ -317,73 +188,55 @@ Point OpenCode's OpenAI-compatible provider at:
 http://<proxy-host>:8905/v1
 ```
 
-If proxy authentication is disabled, the API key can be any non-empty value. If
-authentication is enabled, it must match `auth.keys`.
-
-See [config/opencode/README.md](config/opencode/README.md) for installation and
-verification.
+Guide: [config/opencode/README.md](config/opencode/README.md) | [中文](config/opencode/README.zh-CN.md)
 
 ### Claude Code
 
-Claude Code uses two mechanisms:
+Claude Code needs two pieces:
 
-1. Environment variables set the model base URL and custom headers.
-2. A Claude Code hook reports session start/resume events to the proxy.
+1. wrapper scripts that set `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, `CLAUDE_CODE_RUN_ID`, and workspace metadata
+2. a session hook that reports Claude Code `session_id` events to the proxy
 
-Claude Code model requests should go to:
+Start Claude Code through:
+
+```bash
+# Windows
+config\claude-code\scripts\claude_code_rl.bat
+
+# Linux/macOS
+sh config/claude-code/scripts/claude_code_rl.sh
+```
+
+The model endpoint is:
 
 ```text
 http://<proxy-host>:8906/v1/messages
 ```
 
-Required model request metadata:
-
-- `X-Agent-Name: claude-code`
-- `X-Agent-Run-Id: <stable-run-id>`
-- `X-Agent-Workspace-Id: <workspace-id>`
-- `X-Agent-Workspace: <workspace-path>`
-- `X-Instance-Id: <machine-or-instance-id>`
-
-The hook posts session events to:
+The hook endpoint is:
 
 ```text
 http://<proxy-host>:8906/_agent/session-event
 ```
 
-The proxy uses `X-Agent-Run-Id` to look up the latest session ID reported by the
-hook. This lets `/resume`, `/new`, `/clear`, and startup with an existing session
-continue writing the correct session trajectory.
-
-Claude Code trajectory paths:
-
-```text
-traces/claude-code/<workspace_id>/<session_id>/trajectory.json
-traces/claude-code/<workspace_id>/<session_id>/metadata.json
-traces/claude-code/<workspace_id>/runs/<run_id>.json
-```
-
-See [config/claude-code/README.md](config/claude-code/README.md) for full hook
-and settings instructions.
+Guide: [config/claude-code/README.md](config/claude-code/README.md) | [中文](config/claude-code/README.zh-CN.md)
 
 ### Hermes
 
-Hermes should use the OpenAI-compatible profile:
+Hermes should send OpenAI-compatible requests to:
 
 ```text
 http://<proxy-host>:8907/v1
 ```
 
-Hermes itself must inject:
+Hermes must add request-scoped `extra_headers`:
 
-- `X-Session-Id: <user_name>_<session_id>`
-- `X-Turn-Type: main|side`
+```text
+X-Session-Id: <user_name>_<session_id>
+X-Turn-Type: main|side
+```
 
-The recommended integration injects these headers through `extra_headers` in
-Hermes' main LLM request path. Background memory flushes and cron jobs should be
-marked `side`; user-facing turns should remain `main`.
-
-See [config/hermes/README.md](config/hermes/README.md) for the Hermes patch and
-configuration guide.
+Guide: [config/hermes/README.md](config/hermes/README.md) | [中文](config/hermes/README.zh-CN.md)
 
 ### OpenClaw
 
@@ -393,33 +246,31 @@ OpenClaw uses the dedicated proxy:
 python openclaw_proxy.py
 ```
 
-OpenClaw is different because it has its own gateway and instance model. The
-plugin in
-[config/openclaw/extensions/rl-training-headers](config/openclaw/extensions/rl-training-headers)
-does two things:
+The OpenClaw extension injects:
 
-- injects `X-Session-Id`, `X-Turn-Type`, and `X-Instance-Id` into LLM requests
-- registers the OpenClaw gateway URL/token with `openclaw_proxy.py`
-
-OpenClaw runtime settings live in the top-level `openclaw` section of
-`config.yaml`:
-
-```yaml
-openclaw:
-  port: 8908
-  backend: "GLM-5-FP8"
-  session_dir: "traces/openclaw"
+```text
+X-Session-Id
+X-Turn-Type
+X-Instance-Id
 ```
 
-Make sure the OpenClaw extension's `proxyRegisterUrl` points to the same port.
+It also registers the OpenClaw gateway URL/token with `openclaw_proxy.py`, which lets the proxy route requests for each instance.
 
-See [config/openclaw/README.md](config/openclaw/README.md) for the full OpenClaw
-setup.
+Guide: [config/openclaw/README.md](config/openclaw/README.md) | [中文](config/openclaw/README.zh-CN.md)
 
-## Trajectory Format
+## Trajectories
 
-The main proxy stores one normalized trajectory snapshot per session. A typical
-file looks like:
+The proxy writes JSON trajectories under each agent's configured `session_dir`.
+
+Claude Code uses a workspace/session layout:
+
+```text
+traces/claude-code/<workspace_id>/<session_id>/trajectory.json
+traces/claude-code/<workspace_id>/<session_id>/metadata.json
+traces/claude-code/<workspace_id>/runs/<run_id>.json
+```
+
+Typical normalized trajectory shape:
 
 ```json
 {
@@ -438,18 +289,18 @@ file looks like:
 }
 ```
 
-Important normalization rules:
+Normalization rules:
 
-- Claude Code title-generation requests are skipped so they do not overwrite the
-  real conversation trajectory.
+- Claude Code title-generation requests are skipped.
 - Assistant `<think>...</think>` content is preserved.
-- Claude Code `<system-reminder>...</system-reminder>` blocks are split into
-  chronological `system` messages instead of being stored as user text.
+- Claude Code `<system-reminder>...</system-reminder>` blocks become chronological `system` messages.
 - Random tool call IDs are removed to reduce non-deterministic noise.
+
+Treat trajectory files as sensitive. They may contain prompts, code, tool output, paths, and system reminders.
 
 ## Usage Accounting
 
-Each profile can write token usage to its own JSON file:
+Each profile can write token usage to its configured `usage_json` path:
 
 ```text
 usage/opencode/usage.json
@@ -457,64 +308,32 @@ usage/claude-code/usage.json
 usage/hermes/usage.json
 ```
 
-The `/usage` endpoint returns usage by client IP and model:
+## Development Commands
 
-```bash
-curl http://127.0.0.1:8905/usage
-curl "http://127.0.0.1:8905/usage?ip=127.0.0.1"
-```
-
-## Debugging
-
-Enable request/response tracing:
-
-```yaml
-proxy:
-  debug: true
-  trace: true
-```
-
-Common checks:
-
-```bash
-curl http://127.0.0.1:8905/backends
-curl http://127.0.0.1:8906/backends
-curl http://127.0.0.1:8907/backends
-```
-
-Claude Code session-event check:
-
-```bash
-curl -X POST http://127.0.0.1:8906/_agent/session-event \
-  -H "Content-Type: application/json" \
-  -d '{"agent_name":"claude-code","run_id":"test-run","session_id":"test-session","workspace_id":"test-workspace"}'
-```
-
-Expected response:
-
-```json
-{"ok": true, "run_id": "test-run", "active_session_id": "test-session", "workspace_id": "test-workspace"}
-```
-
-## Testing
-
-From the repository root:
+Compile-check the proxy scripts:
 
 ```bash
 python -B -m py_compile proxy/agent_proxy_core.py proxy/opencode_proxy.py proxy/claude_code_proxy.py proxy/hermes_proxy.py proxy/openclaw_proxy.py
+```
+
+Run the test suite from the repository root:
+
+```bash
 python -m unittest discover -s tests -v
 ```
 
-Some tests cover historical scripts and fixtures outside `proxy/`; that is part
-of the current repository structure.
+## Contribution Notes
 
-## Security Notes
+- Keep each agent integration in its own folder or entrypoint.
+- Do not reintroduce `client.py` or `openclaw_client.py`; those names are intentionally retired.
+- Keep docs portable. Use placeholders such as `<proxy-host>`, `<user-home>`, and `<workspace-path>` instead of machine-specific paths.
+- Add new agent-specific details to that agent's `config/<agent>/README.md`, then link from this root README.
+- Do not commit `.env`, runtime traces, usage files, gateway registries, or real API keys.
 
-- Do not commit real upstream API keys.
-- Treat trajectory files as sensitive. They may contain prompts, source code,
-  tool outputs, local paths, and system reminders.
-- If `auth.enabled` is `false`, any client that can reach the proxy port can
-  call the proxy. Bind to a trusted network or enable authentication before
-  exposing it beyond a private machine or tailnet.
-- Claude Code hooks should be best-effort: if the proxy is temporarily
-  unavailable, the hook should log the failure but must not block Claude Code.
+## License
+
+No license file is currently included. Add one before publishing or distributing this package beyond private/internal use.
+
+## Contact
+
+No public maintainer contact is defined yet. For internal deployments, document the owner or on-call channel here before sharing the repository broadly.
