@@ -1,5 +1,7 @@
 # OpenCode Proxy Configuration
 
+Language / 语言: English | [简体中文](README.zh-CN.md)
+
 This folder contains the OpenCode integration for RL trajectory collection.
 
 OpenCode is the simplest supported client because its plugin API exposes a
@@ -276,4 +278,3 @@ If all requests are marked `main`:
 
 - check which `input.agent` value OpenCode sends for background tasks
 - add that value to `SIDE_TRIGGERS` if it should be filtered as side traffic
-

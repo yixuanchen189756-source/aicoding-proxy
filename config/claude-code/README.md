@@ -1,5 +1,7 @@
 # Claude Code Proxy Configuration
 
+Language / 语言: English | [简体中文](README.zh-CN.md)
+
 This folder contains the Claude Code hook used by the proxy to bind Claude Code
 session IDs to model requests.
 

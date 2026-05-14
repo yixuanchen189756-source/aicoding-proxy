@@ -1,5 +1,7 @@
 # OpenClaw Proxy Configuration
 
+Language / 语言: English | [简体中文](README.zh-CN.md)
+
 This folder contains the OpenClaw-specific integration assets for RL trajectory
 collection.
 
