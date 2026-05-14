@@ -2,157 +2,95 @@
 
 语言 / Language: [English](README.md) | 简体中文
 
-本目录是项目最终交付用的代理包，用于接入多个 coding agent，转发它们的 LLM 请求，并按 agent/session/workspace 存储训练轨迹。
+AI Coding Proxy 是一个小而直接、以文件为中心的代理包，用于采集 coding agent 轨迹，同时把模型请求路由到 `config.yaml` 中配置的上游 LLM 服务。
 
-这个项目的实现风格是“小而直接”：运行配置放在 `config.yaml`，各个 agent 的插件、hook 和说明放在 `config/` 子目录，代理把轨迹写成 JSON 文件。每个 agent 优先使用它自身最轻量、最稳定的 hook 或插件机制，尽量不侵入 agent 的主流程。
+它面向四类 agent：
 
-## 项目目标
+| Agent | 启动入口 | 端口 | 客户端协议 | 轨迹根目录 |
+| --- | --- | ---: | --- | --- |
+| OpenCode | `opencode_proxy.py` | `8905` | OpenAI-compatible | `traces/opencode` |
+| Claude Code | `claude_code_proxy.py` | `8906` | Anthropic Messages | `traces/claude-code` |
+| Hermes | `hermes_proxy.py` | `8907` | OpenAI-compatible | `traces/hermes` |
+| OpenClaw | `openclaw_proxy.py` | `8908` | OpenAI-compatible gateway | `traces/openclaw` |
 
-这个代理主要解决四件事：
+这个代理不替代这些 agent。它位于 agent 和上游模型服务之间，让每个请求都能归属到正确的 session、workspace、run 和 agent。
 
-- 用同一套代码服务多个 coding agent。
-- 把不同 agent 的请求路由到不同的上游模型后端。
-- 给每条轨迹绑定稳定的 session/workspace/run metadata。
-- 按 agent 分开存储轨迹，方便后续筛选、检查、训练和回放。
+## 心智模型
 
-这个项目不是为了替代 OpenCode、Claude Code、Hermes 或 OpenClaw。它位于 agent 和上游模型服务之间，在尽量保持 agent 原始行为的同时，增加请求路由、轨迹采集和会话归档能力。
+问题：
+  为什么这个包存在？
 
-## 目录结构
+模型：
+  agent 请求 + 稳定 headers + proxy profile = 可回放的轨迹
+
+流程：
+
+```text
+Coding agent
+  -> agent-specific headers/hooks/plugins
+  -> dedicated proxy port
+  -> configured upstream backend
+  -> per-agent trajectory files
+```
+
+规则：
+  每个 agent 都拥有自己的进程、端口、请求形态和轨迹目录。
+
+这种隔离是有意设计的。OpenCode、Claude Code、Hermes 和 OpenClaw 暴露的扩展点不同，所以代理把它们的接入逻辑分开，同时共享 backend 配置和轨迹约定。
+
+## 仓库结构
 
 ```text
 proxy/
   agent_proxy_core.py
-    OpenCode、Claude Code、Hermes 共享的代理核心。下面三个独立入口脚本
-    会导入这个文件，并且每次只选择一个 profile。
+    OpenCode、Claude Code、Hermes 共用的 FastAPI 核心。
+    这不是启动脚本。
 
   opencode_proxy.py
   claude_code_proxy.py
   hermes_proxy.py
-    OpenCode、Claude Code、Hermes 的独立 agent 入口。每个脚本只启动对应
-    agent 真正需要的接口。
+    很薄的启动入口，每个脚本只从 config.yaml 选择一个 profile。
 
   openclaw_proxy.py
-    OpenClaw 专用代理逻辑。负责 OpenClaw gateway 注册、instance 路由、
-    token registry、OpenClaw 内部消息处理和轨迹整理，并从 config.yaml
-    读取 OpenClaw 运行配置。
+    OpenClaw 专用代理，负责 gateway 注册和 instance 路由。
 
   config.yaml
-    主运行配置。包含模型后端、agent profile、OpenClaw 运行配置、
-    认证、metrics、trace、usage 等配置。
+    上游 backend、agent profile、auth、trace、usage 文件和 OpenClaw 设置。
 
   config/
     opencode/
-      OpenCode 插件和说明文档。
-
     claude-code/
-      Claude Code hook 脚本和说明文档。
-
     hermes/
-      Hermes 接入说明。
-
     openclaw/
-      OpenClaw extensions、skills、workspace templates 和说明文档。
+      各 agent 专用插件、hook、脚本和配置指南。
 ```
 
-如果 `config.yaml` 中使用相对路径，运行输出会相对于当前进程工作目录写入：
+这个包里有意不提供 `client.py` 入口。请使用上面的独立启动脚本。
 
-```text
-traces/
-  opencode/
-  claude-code/
-  hermes/
-  openclaw/
+## 前置条件
 
-usage/
-  opencode/
-  claude-code/
-  hermes/
-```
+- Python 3.10+
+- 代理主机能够访问 `config.yaml` 中配置的上游模型服务
+- 至少一个可用的上游 backend
+- 各 agent 的 header 注入机制：
+  - OpenCode：plugin hook
+  - Claude Code：wrapper 环境变量 + session hook
+  - Hermes：请求级 `extra_headers` patch
+  - OpenClaw：extension + gateway registration
 
-## 代理组成
-
-### 共享核心和独立入口
-
-[agent_proxy_core.py](agent_proxy_core.py) 是 OpenCode、Claude Code、Hermes 的共享代理核心。它不是启动入口；正常使用时请启动对应的独立入口脚本：
+安装 Python 依赖：
 
 ```bash
-python opencode_proxy.py
-python claude_code_proxy.py
-python hermes_proxy.py
+pip install fastapi uvicorn aiohttp pyyaml prometheus-client
 ```
 
-每个入口脚本都会导入 `agent_proxy_core.py`，从 [config.yaml](config.yaml) 中只选择自己的 profile，并创建一个只包含该 coding agent 所需接口的 app。这样每个进程负责一个 agent，部署和排查问题都更清楚。
+## 配置
 
-当前三个主 profile：
+运行配置在 [config.yaml](config.yaml) 中。
 
-| Agent | 端口 | 客户端协议 | 上游处理方式 | 轨迹目录 |
-| --- | ---: | --- | --- | --- |
-| OpenCode | `8905` | OpenAI-compatible | 直接转发 OpenAI 格式请求 | `traces/opencode` |
-| Claude Code | `8906` | Anthropic Messages | 必要时转换为 OpenAI chat/completions | `traces/claude-code` |
-| Hermes | `8907` | OpenAI-compatible | 直接转发 OpenAI 格式请求 | `traces/hermes` |
+### Backends
 
-这个包里有意不再提供 `client.py` 入口。拆分后的独立脚本就是支持的部署方式。
-
-### openclaw_proxy.py
-
-[openclaw_proxy.py](openclaw_proxy.py) 是 OpenClaw 专用代理。它会读取 [config.yaml](config.yaml) 顶层的 `openclaw` 配置，并据此设置监听端口、上游 backend 和轨迹目录。它不和前三个 agent 共用 `agent_proxy_core.py`，因为 OpenClaw 有自己的 gateway 和 instance 模型。
-
-OpenClaw 比其他 agent 多了 gateway 和 instance 概念，所以它需要额外处理：
-
-- `X-Instance-Id`
-- gateway URL/token 注册
-- `gateway_instances.json`
-- `gateway_tokens.json`
-- OpenClaw 内部消息过滤
-- OpenClaw session/task 轨迹整理
-
-启动入口是：
-
-```bash
-python openclaw_proxy.py
-```
-
-## 接口暴露范围
-
-独立 agent 入口只暴露对应 agent 真正会用到的接口。
-
-OpenCode 和 Hermes：
-
-- `GET /`
-- `HEAD /`
-- `GET /health`
-- `GET /v1/models`
-- `/v1/{path:path}`
-
-Claude Code：
-
-- `GET /`
-- `HEAD /`
-- `GET /health`
-- `GET /v1/models`
-- `/v1/{path:path}`
-- `POST /_agent/session-event`
-
-独立 profile 入口有意不暴露宽泛的调试/管理接口，例如：
-
-- `GET /backends`
-- `GET /usage`
-- `GET /metrics`
-
-## 配置模型
-
-`config.yaml` 主要包含四类配置：
-
-- `backends`
-- `profiles`
-- `openclaw`
-- `auth` / `metrics` / `proxy`
-
-### backends
-
-`backends` 定义上游模型服务。每个 backend 可以有一个或多个 endpoint，也可以配置模型名映射、endpoint 级 API key、OpenAI 格式 URL、额外请求头等。
-
-示例：
+`backends` 描述上游模型服务。真实凭证请使用环境变量占位符：
 
 ```yaml
 backends:
@@ -160,22 +98,17 @@ backends:
     base_url: "https://provider.example.com"
     api_key: "${MY_BACKEND_API_KEY}"
     timeout_s: 600
-    max_retries: 1
-    retry_delay_s: 0.5
     endpoints:
       - url: "https://provider.example.com"
         model: "provider-model-name"
         openai_url: "https://provider.example.com"
-        extra_headers:
-          User-Agent: "claude-code/2.1.888"
-    load_balance: "least_connections"
 ```
 
-不要把真实上游 API key 提交到仓库。建议使用占位符、环境变量展开，或者维护一份私有部署版 `config.yaml`。
+不要提交真实付费 API key。本地 secret 应放在 `.env` 或部署环境里。
 
-### profiles
+### Profiles
 
-`profiles` 绑定 agent 名称、本地监听端口、协议类型、backend 和轨迹路径。
+`profiles` 把三个共享核心 agent 绑定到端口、协议、backend 和输出路径：
 
 ```yaml
 profiles:
@@ -201,11 +134,11 @@ profiles:
     usage_json: "usage/hermes/usage.json"
 ```
 
-代理启动时会验证 `opencode`、`claude-code`、`hermes` 这些 coding-agent profile。无效 profile 会被禁用并输出清晰 warning。如果三者全部不可用，进程会退出。
+无效 profile 会在启动时被禁用，并打印清晰 warning。如果请求启动的 profile 没有任何一个可用 backend，进程会退出。
 
-### openclaw
+### OpenClaw
 
-OpenClaw 不放在 `profiles` 里，因为它由 `openclaw_proxy.py` 直接处理，而不是普通的共享 profile。
+OpenClaw 使用自己的顶层配置，因为它不走 `agent_proxy_core.py`：
 
 ```yaml
 openclaw:
@@ -214,37 +147,9 @@ openclaw:
   session_dir: "traces/openclaw"
 ```
 
-字段含义：
+## 本地运行
 
-- `port`: `openclaw_proxy.py` 监听端口。
-- `backend`: OpenClaw 使用的上游 backend 名称，必须存在于 `backends`。
-- `session_dir`: OpenClaw 轨迹目录。
-
-### proxy
-
-```yaml
-proxy:
-  connect_timeout_s: 10
-  stream_chunk_size: 8192
-  debug: false
-  trace: false
-  usage_json: "usage.json"
-```
-
-- `debug`: 打印路由、上游错误、重试等诊断信息。
-- `trace`: 把请求/响应摘要打印到 stderr。
-- `session_json`: 旧版轨迹存储路径；现在优先使用 profile 的 `session_dir`。
-- `usage_json`: 旧版 usage 存储路径；现在优先使用 profile 的 `usage_json`。
-
-## 启动方式
-
-安装依赖：
-
-```bash
-pip install fastapi uvicorn aiohttp pyyaml prometheus-client
-```
-
-推荐分别启动四个独立代理。每个脚本负责一个 agent 和一个配置好的端口：
+建议每个代理单独一个终端或进程管理器：
 
 ```bash
 cd proxy
@@ -254,9 +159,7 @@ python hermes_proxy.py
 python openclaw_proxy.py
 ```
 
-这个包里没有合并式 `client.py` 启动路径。OpenClaw 始终通过 `openclaw_proxy.py` 启动；它不属于共享 profile router。
-
-快速检查：
+健康检查：
 
 ```bash
 curl http://127.0.0.1:8905/health
@@ -265,18 +168,18 @@ curl http://127.0.0.1:8907/health
 curl http://127.0.0.1:8908/health
 ```
 
-如果代理运行在另一台机器上，把 `127.0.0.1` 换成对应主机 IP 或 tailnet IP。
+如果代理运行在另一台机器上，把 `127.0.0.1` 换成代理主机或 tailnet IP。
 
-## Agent 接入方式
+## Agent 接入
 
 ### OpenCode
 
-OpenCode 使用 [config/opencode/rl-training-headers](config/opencode/rl-training-headers) 插件。
+OpenCode 使用 `config/opencode/rl-training-headers`，它会注入：
 
-这个插件使用 OpenCode 原生的 `chat.headers` hook。每次 LLM 请求前，它会注入：
-
-- `X-Session-Id: <userName>_<sessionID>`
-- `X-Turn-Type: main|side`
+```text
+X-Session-Id: <userName>_<sessionID>
+X-Turn-Type: main|side
+```
 
 OpenCode 的 OpenAI-compatible provider 应指向：
 
@@ -284,40 +187,81 @@ OpenCode 的 OpenAI-compatible provider 应指向：
 http://<proxy-host>:8905/v1
 ```
 
-如果代理没有启用认证，API key 可以是任意非空值。如果启用了认证，API key 必须匹配 `auth.keys`。
-
-详细安装和验证方式见 [config/opencode/README.md](config/opencode/README.md)。
+指南：[config/opencode/README.md](config/opencode/README.md) | [中文](config/opencode/README.zh-CN.md)
 
 ### Claude Code
 
-Claude Code 使用两个机制配合：
+Claude Code 需要两部分：
 
-1. 环境变量设置模型请求的 base URL 和自定义 header。
-2. Claude Code hook 把 session start/resume 事件上报给代理。
+1. wrapper 脚本设置 `ANTHROPIC_BASE_URL`、`ANTHROPIC_CUSTOM_HEADERS`、`CLAUDE_CODE_RUN_ID` 和 workspace metadata
+2. session hook 把 Claude Code 的 `session_id` 事件上报给代理
 
-Claude Code 的模型请求应指向：
+通过 wrapper 启动 Claude Code：
+
+```bash
+# Windows
+config\claude-code\scripts\claude_code_rl.bat
+
+# Linux/macOS
+sh config/claude-code/scripts/claude_code_rl.sh
+```
+
+模型端点：
 
 ```text
 http://<proxy-host>:8906/v1/messages
 ```
 
-模型请求必须带这些 metadata header：
-
-- `X-Agent-Name: claude-code`
-- `X-Agent-Run-Id: <stable-run-id>`
-- `X-Agent-Workspace-Id: <workspace-id>`
-- `X-Agent-Workspace: <workspace-path>`
-- `X-Instance-Id: <machine-or-instance-id>`
-
-hook 上报 session event 到：
+hook 端点：
 
 ```text
 http://<proxy-host>:8906/_agent/session-event
 ```
 
-代理用 `X-Agent-Run-Id` 查询 hook 最近上报的 session ID。这样 `/resume`、`/new`、`/clear`，以及启动时直接打开已有 session，都能继续写入正确的 session 轨迹。
+指南：[config/claude-code/README.md](config/claude-code/README.md) | [中文](config/claude-code/README.zh-CN.md)
 
-Claude Code 轨迹路径：
+### Hermes
+
+Hermes 应把 OpenAI-compatible 请求发送到：
+
+```text
+http://<proxy-host>:8907/v1
+```
+
+Hermes 必须添加请求级 `extra_headers`：
+
+```text
+X-Session-Id: <user_name>_<session_id>
+X-Turn-Type: main|side
+```
+
+指南：[config/hermes/README.md](config/hermes/README.md) | [中文](config/hermes/README.zh-CN.md)
+
+### OpenClaw
+
+OpenClaw 使用专用代理：
+
+```bash
+python openclaw_proxy.py
+```
+
+OpenClaw extension 会注入：
+
+```text
+X-Session-Id
+X-Turn-Type
+X-Instance-Id
+```
+
+它还会向 `openclaw_proxy.py` 注册 OpenClaw gateway URL/token，这样代理就能按 instance 路由请求。
+
+指南：[config/openclaw/README.md](config/openclaw/README.md) | [中文](config/openclaw/README.zh-CN.md)
+
+## 轨迹
+
+代理会把 JSON 轨迹写到每个 agent 配置的 `session_dir`。
+
+Claude Code 使用 workspace/session 目录结构：
 
 ```text
 traces/claude-code/<workspace_id>/<session_id>/trajectory.json
@@ -325,54 +269,7 @@ traces/claude-code/<workspace_id>/<session_id>/metadata.json
 traces/claude-code/<workspace_id>/runs/<run_id>.json
 ```
 
-完整 hook 和 settings 配置见 [config/claude-code/README.md](config/claude-code/README.md)。
-
-### Hermes
-
-Hermes 应配置为使用 OpenAI-compatible profile：
-
-```text
-http://<proxy-host>:8907/v1
-```
-
-Hermes 自身需要在主 LLM 请求中注入：
-
-- `X-Session-Id: <user_name>_<session_id>`
-- `X-Turn-Type: main|side`
-
-推荐做法是在 Hermes 构造 LLM 请求参数时，通过 `extra_headers` 注入这些 header。后台 memory flush、cron 等任务应标记为 `side`，用户主动交互应标记为 `main`。
-
-Hermes patch 和配置说明见 [config/hermes/README.md](config/hermes/README.md)。
-
-### OpenClaw
-
-OpenClaw 使用独立代理：
-
-```bash
-python openclaw_proxy.py
-```
-
-OpenClaw 和前三者不同，因为它有自己的 gateway 和 instance 模型。[config/openclaw/extensions/rl-training-headers](config/openclaw/extensions/rl-training-headers) 插件负责：
-
-- 给 LLM 请求注入 `X-Session-Id`、`X-Turn-Type`、`X-Instance-Id`
-- 向 `openclaw_proxy.py` 注册 OpenClaw gateway URL/token
-
-OpenClaw 的运行配置在 `config.yaml` 顶层 `openclaw` 段：
-
-```yaml
-openclaw:
-  port: 8908
-  backend: "GLM-5-FP8"
-  session_dir: "traces/openclaw"
-```
-
-请确保 OpenClaw 插件里的 `proxyRegisterUrl` 指向同一个端口。
-
-完整 OpenClaw 配置说明见 [config/openclaw/README.md](config/openclaw/README.md)。
-
-## 轨迹格式
-
-主代理会为每个 session 存储一个归一化后的轨迹快照。典型结构：
+典型的归一化轨迹结构：
 
 ```json
 {
@@ -391,16 +288,18 @@ openclaw:
 }
 ```
 
-重要归一化规则：
+归一化规则：
 
-- Claude Code 的 title-generation 请求会被跳过，避免覆盖真实对话轨迹。
-- assistant 的 `<think>...</think>` 内容会保留。
-- Claude Code 的 `<system-reminder>...</system-reminder>` block 会按时间顺序拆成 `system` message，而不是混在 user message 里。
-- tool call 里的随机 ID 会被移除，减少非确定性噪声。
+- 跳过 Claude Code 的 title-generation 请求。
+- 保留 assistant 的 `<think>...</think>` 内容。
+- Claude Code 的 `<system-reminder>...</system-reminder>` 块会变成按时间顺序排列的 `system` messages。
+- 移除随机 tool call ID，减少非确定性噪声。
+
+轨迹文件应视为敏感数据。它们可能包含 prompts、代码、工具输出、路径和 system reminders。
 
 ## 用量统计
 
-每个 profile 可以写入自己的 token usage JSON：
+每个 profile 可以把 token usage 写入配置的 `usage_json` 路径：
 
 ```text
 usage/opencode/usage.json
@@ -408,59 +307,32 @@ usage/claude-code/usage.json
 usage/hermes/usage.json
 ```
 
-`/usage` 接口可以按 client IP 和 model 查看用量：
+## 开发命令
 
-```bash
-curl http://127.0.0.1:8905/usage
-curl "http://127.0.0.1:8905/usage?ip=127.0.0.1"
-```
-
-## 调试
-
-打开请求/响应 trace：
-
-```yaml
-proxy:
-  debug: true
-  trace: true
-```
-
-常用检查：
-
-```bash
-curl http://127.0.0.1:8905/backends
-curl http://127.0.0.1:8906/backends
-curl http://127.0.0.1:8907/backends
-```
-
-Claude Code session-event 手动测试：
-
-```bash
-curl -X POST http://127.0.0.1:8906/_agent/session-event \
-  -H "Content-Type: application/json" \
-  -d '{"agent_name":"claude-code","run_id":"test-run","session_id":"test-session","workspace_id":"test-workspace"}'
-```
-
-期望返回：
-
-```json
-{"ok": true, "run_id": "test-run", "active_session_id": "test-session", "workspace_id": "test-workspace"}
-```
-
-## 测试
-
-在仓库根目录运行：
+编译检查代理脚本：
 
 ```bash
 python -B -m py_compile proxy/agent_proxy_core.py proxy/opencode_proxy.py proxy/claude_code_proxy.py proxy/hermes_proxy.py proxy/openclaw_proxy.py
+```
+
+在仓库根目录运行测试：
+
+```bash
 python -m unittest discover -s tests -v
 ```
 
-部分测试会覆盖 `proxy/` 之外的历史脚本和测试 fixtures，这是当前仓库结构的一部分。
+## 贡献说明
 
-## 安全注意事项
+- 每个 agent 的集成都应保留在自己的目录或入口脚本中。
+- 不要重新引入 `client.py` 或 `openclaw_client.py`；这些名字已经有意废弃。
+- 文档要保持可移植。使用 `<proxy-host>`、`<user-home>`、`<workspace-path>` 这类占位符，不要写机器专用路径。
+- 新的 agent 细节应写入对应的 `config/<agent>/README.md`，再从根 README 链接过去。
+- 不要提交 `.env`、运行时轨迹、usage 文件、gateway registry 或真实 API key。
 
-- 不要提交真实上游 API key。
-- 轨迹文件是敏感数据，可能包含 prompt、源码、工具输出、本地路径和 system reminder。
-- 如果 `auth.enabled` 为 `false`，任何能访问代理端口的客户端都可以调用代理。暴露到非可信网络前，请绑定到可信网络或启用认证。
-- Claude Code hook 应该是 best-effort：代理暂时不可用时，hook 应记录失败但不能阻塞 Claude Code。
+## License
+
+当前仓库还没有 license 文件。在公开发布或用于更广泛分发前，请先补充 license。
+
+## Contact
+
+当前还没有公开 maintainer contact。内部部署时，建议在广泛共享仓库前补充 owner 或 on-call channel。
