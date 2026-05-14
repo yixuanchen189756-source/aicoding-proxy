@@ -1,0 +1,48 @@
+{
+  "id": "rl-training-headers",
+  "name": "RL Training Headers",
+  "description": "Injects session, turn type, and instance headers into LLM API requests and registers the OpenClaw gateway with the proxy",
+  "version": "1.0.0",
+  "entry": "./index.js",
+  "activation": {
+    "onStartup": true
+  },
+  "kind": "extension",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionIdHeader": {
+        "type": "string",
+        "default": "X-Session-Id"
+      },
+      "turnTypeHeader": {
+        "type": "string",
+        "default": "X-Turn-Type"
+      },
+      "instanceIdHeader": {
+        "type": "string",
+        "default": "X-Instance-Id"
+      },
+      "instanceId": {
+        "type": "string"
+      },
+      "proxyRegisterUrl": {
+        "type": "string"
+      },
+      "gatewayUrl": {
+        "type": "string"
+      },
+      "gatewayToken": {
+        "type": "string"
+      },
+      "gatewayPort": {
+        "type": "string"
+      },
+      "registerOnStart": {
+        "type": "boolean",
+        "default": true
+      }
+    }
+  }
+}

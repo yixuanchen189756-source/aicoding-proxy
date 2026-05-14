@@ -1,0 +1,115 @@
+﻿# ================================================================================
+# OpenAI 鍏煎浠ｇ悊鏈嶅姟 - 閰嶇疆鏂囦欢
+# ================================================================================
+
+# 鍚庣閰嶇疆
+# key 涓哄悗绔悕绉帮紝model name 浼氫笌涔嬪尮閰?
+backends:
+  # GLM-5-FP8 妯″瀷鍚庣 (10.31.6.8)
+  glm-5-fp8:
+    base_url: "https://api.minimaxi.com/anthropic"
+    api_key: null
+    timeout_s: 600
+    max_retries: 1
+    retry_delay_s: 0.5
+    endpoints:
+      - url: "https://api.minimaxi.com/anthropic"
+        model: "MiniMax-M2.7"
+        api_key: "${MINIMAX_API_KEY}"
+        openai_url: "https://api.minimaxi.com"
+    load_balance: "least_connections"
+    max_concurrent: 0
+    requests_per_minute: 0
+
+
+
+  # GLM-5-FP8 妯″瀷鍚庣 (10.31.6.6)
+  GLM-5-FP8:
+    base_url: "https://ark.cn-beijing.volces.com/api/coding"
+    api_key: "${ARK_API_KEY}"
+    timeout_s: 600
+    max_retries: 1
+    retry_delay_s: 0.5
+    endpoints:
+      - url: "https://ark.cn-beijing.volces.com/api/coding"
+        model: "glm-5.1"
+    load_balance: "least_connections"
+    max_concurrent: 0
+    requests_per_minute: 0
+
+
+
+  # minimax2.5 妯″瀷鍚庣 (涓? + gemma4 澶囩敤 (璐熻浇鍧囪　)
+  minimax2.5:
+    base_url: "https://api.kimi.com/coding/"
+    api_key: "${KIMI_API_KEY}"
+    timeout_s: 600
+    max_retries: 1
+    retry_delay_s: 0.5
+    endpoints:
+      - url: "https://api.kimi.com/coding/"
+        model: "kimi-for-coding/k2p6"
+        openai_url: "https://api.kimi.com/coding/"
+        extra_headers:
+          User-Agent: "claude-code/2.1.888"
+    load_balance: "least_connections"  # 鎸夎繛鎺ユ暟閫夋嫨锛岃嚜鍔ㄥ垏鎹㈠埌璐熻浇浣庣殑绔偣
+    max_concurrent: 0
+    requests_per_minute: 0
+
+
+# 榛樿鍚庣
+default_backend: "glm-5-fp8"
+
+# Coding agent listener profiles
+profiles:
+  opencode:
+    port: 8905
+    protocol: "openai"
+    backend: "minimax2.5"
+    session_dir: "traces/opencode"
+    usage_json: "usage/opencode/usage.json"
+    require_agent_header: false
+
+  claude-code:
+    port: 8906
+    protocol: "anthropic"
+    backend: "glm-5-fp8"
+    session_dir: "traces/claude-code"
+    usage_json: "usage/claude-code/usage.json"
+    require_agent_header: false
+
+  hermes:
+    port: 8907
+    protocol: "openai"
+    backend: "GLM-5-FP8"
+    session_dir: "traces/hermes"
+    usage_json: "usage/hermes/usage.json"
+    require_agent_header: false
+
+# OpenClaw uses proxy/openclaw_client.py, not the main multi-profile client.py.
+# Keep its runtime settings here so model/provider configuration lives in one file.
+openclaw:
+  port: 8908
+  backend: "GLM-5-FP8"
+  session_dir: "traces/openclaw"
+
+# 璁よ瘉閰嶇疆
+auth:
+  enabled: false
+  keys: []
+  keys_file: null
+
+# 鐩戞帶閰嶇疆
+metrics:
+  enabled: true
+  path: "/metrics"
+
+# 浠ｇ悊閰嶇疆
+proxy:
+  port: 8905
+  connect_timeout_s: 10
+  stream_chunk_size: 8192
+  debug: false
+  trace: false
+  session_json: null
+  usage_json: "usage.json"

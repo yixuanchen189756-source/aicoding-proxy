@@ -1,0 +1,364 @@
+# OpenClaw Proxy Configuration
+
+This folder contains the OpenClaw-specific integration assets for RL trajectory
+collection.
+
+OpenClaw is handled separately from the main `client.py` profiles. Use
+`proxy/openclaw_client.py` for OpenClaw because OpenClaw has its own gateway,
+instance registration, and internal-message patterns.
+
+## Directory Layout
+
+```text
+config/openclaw/
+  extensions/
+    rl-training-headers/
+      Injects RL headers and registers the OpenClaw gateway with the proxy.
+
+    task-commands/
+      Provides the clear_memory tool used by the /clear-memory skill.
+
+  skills/
+    clear-memory/
+      User-invocable skill that calls clear_memory.
+
+  workspace/
+    markdown_templates/
+      Template markdown files used to reset OpenClaw workspace memory.
+```
+
+## Runtime Components
+
+### OpenClaw Proxy
+
+Start the OpenClaw-specific proxy from `proxy/`:
+
+```bash
+python openclaw_proxy.py
+```
+
+`openclaw_proxy.py` is a thin entrypoint that loads `config.yaml` and then runs
+`openclaw_client.py`.
+
+By default, the current OpenClaw proxy listens on:
+
+```text
+http://0.0.0.0:8908
+```
+
+Set `OPENAI_PROXY_PORT` if you want a different port:
+
+```bash
+OPENAI_PROXY_PORT=8288 python openclaw_client.py
+```
+
+The preferred persistent configuration is the top-level `openclaw` block in
+`proxy/config.yaml`:
+
+```yaml
+openclaw:
+  port: 8908
+  backend: "GLM-5-FP8"
+  session_dir: "traces/openclaw"
+```
+
+Important environment variables:
+
+```text
+VLLM_BASE_URL
+  Upstream backend base URL. Default in the code is local development oriented.
+
+VLLM_MODEL_NAME
+  Model name sent to the upstream backend.
+
+VLLM_API_KEY
+  Upstream API key.
+
+OPENAI_PROXY_PORT
+  Port for openclaw_client.py. Current code default: 8908.
+
+OPENAI_PROXY_TRACE=1
+  Print request/response trace summaries to stderr.
+
+OPENAI_PROXY_SESSION_FOLDER
+  Directory for per-session trajectory files.
+```
+
+The OpenClaw proxy also persists gateway metadata near the script:
+
+```text
+gateway_tokens.json
+gateway_instances.json
+```
+
+Those files contain runtime registration information and should not be treated
+as portable source files.
+
+### rl-training-headers Extension
+
+Path:
+
+```text
+config/openclaw/extensions/rl-training-headers/
+```
+
+Purpose:
+
+- inject `X-Session-Id`
+- inject `X-Turn-Type`
+- inject `X-Instance-Id`
+- register the OpenClaw gateway URL/token with `openclaw_client.py`
+
+Unlike OpenCode, OpenClaw does not provide the same native `chat.headers` hook.
+This extension uses OpenClaw lifecycle events and a narrow `globalThis.fetch`
+patch:
+
+```text
+before_prompt_build
+  -> compute pending headers from session/trigger
+  -> patched fetch injects headers into the next POST
+agent_end
+  -> clear pending headers
+```
+
+The extension also registers a service startup hook and retries registration on
+`before_prompt_build` if startup registration did not complete.
+
+### task-commands Extension
+
+Path:
+
+```text
+config/openclaw/extensions/task-commands/
+```
+
+Purpose:
+
+- registers a `clear_memory` tool
+- resets workspace markdown files from `workspace/markdown_templates`
+- clears existing `.md` workspace files that do not have a matching template
+
+### clear-memory Skill
+
+Path:
+
+```text
+config/openclaw/skills/clear-memory/SKILL.md
+```
+
+User command:
+
+```text
+/clear-memory
+```
+
+This command directly invokes `clear_memory`. It is intentionally destructive
+within the OpenClaw workspace markdown files, so use it only when the current
+workspace memory should be reset from templates.
+
+## Header Semantics
+
+### X-Session-Id
+
+Format:
+
+```text
+<fixed-user-name>_<openclaw-session-id>
+```
+
+The current extension code uses a fixed user namespace in `index.ts`:
+
+```ts
+const FIXED_USER_NAME = "your-fixed-user-name";
+```
+
+Change this before production use if you need per-user or per-machine
+namespacing.
+
+### X-Turn-Type
+
+| Value | Meaning |
+| --- | --- |
+| `main` | User-facing interaction. |
+| `side` | Background or maintenance activity. |
+
+The extension classifies these triggers as `side`:
+
+```text
+heartbeat
+memory
+cron
+```
+
+Everything else is `main`.
+
+### X-Instance-Id
+
+Identifies the OpenClaw instance. This lets the proxy keep gateway registrations
+and trajectories separate when multiple OpenClaw instances call the same proxy.
+
+Default resolution order:
+
+1. plugin config `instanceId`
+2. `OPENCLAW_INSTANCE_ID`
+3. `COMPUTERNAME`
+4. `openclaw-default`
+
+## Extension Configuration
+
+`rl-training-headers/openclaw.plugin.json` defines these options:
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `sessionIdHeader` | `X-Session-Id` | Header name for session ID. |
+| `turnTypeHeader` | `X-Turn-Type` | Header name for turn type. |
+| `instanceIdHeader` | `X-Instance-Id` | Header name for instance ID. |
+| `instanceId` | environment or machine name | Stable OpenClaw instance ID. |
+| `proxyRegisterUrl` | `http://127.0.0.1:8288/register-instance` | Registration endpoint on `openclaw_client.py`. |
+| `gatewayUrl` | `http://127.0.0.1:<gatewayPort>/v1/chat/completions` | OpenClaw gateway URL. |
+| `gatewayToken` | read from OpenClaw state when possible | Gateway auth token. |
+| `gatewayPort` | `18789` | Local OpenClaw gateway port. |
+| `registerOnStart` | `true` | Whether to register at service start. |
+
+Environment variable fallbacks:
+
+```text
+OPENCLAW_STATE_DIR
+OPENCLAW_GATEWAY_PORT
+OPENCLAW_PROXY_REGISTER_URL
+OPENCLAW_GATEWAY_URL
+OPENCLAW_GATEWAY_TOKEN
+OPENCLAW_INSTANCE_ID
+OPENCLAW_WORKSPACE_DIR
+```
+
+Important: the extension default `proxyRegisterUrl` is `8288`, while the current
+OpenClaw proxy default port is `8908`. Use one of these approaches:
+
+```text
+Option A: run openclaw_client.py on 8288
+  OPENAI_PROXY_PORT=8288 python openclaw_proxy.py
+
+Option B: point the extension to 8908
+  OPENCLAW_PROXY_REGISTER_URL=http://127.0.0.1:8908/register-instance
+```
+
+The two values must match or gateway registration will fail.
+
+The extension tries to read the gateway token from:
+
+```text
+<OPENCLAW_STATE_DIR>/openclaw.json
+%USERPROFILE%\.openclaw\openclaw.json
+$HOME/.openclaw/openclaw.json
+```
+
+## Installing the Extensions
+
+Copy the extension folders into the OpenClaw extension location used by your
+installation. A typical Windows layout is:
+
+```text
+C:\Users\<you>\.openclaw\extensions\rl-training-headers
+C:\Users\<you>\.openclaw\extensions\task-commands
+```
+
+Copy the skill:
+
+```text
+C:\Users\<you>\.openclaw\skills\clear-memory
+```
+
+Copy or merge workspace templates:
+
+```text
+C:\Users\<you>\.openclaw\workspace\markdown_templates
+```
+
+After copying, restart OpenClaw or reload its extensions.
+
+## Proxy Registration Flow
+
+The intended flow is:
+
+```text
+OpenClaw starts
+  -> rl-training-headers extension loads
+  -> extension resolves gateway URL/token/instance ID
+  -> extension POSTs registration to openclaw_client.py
+  -> proxy stores gateway_instances.json
+  -> later LLM requests carry X-Instance-Id and X-Session-Id
+  -> proxy can route/attribute requests for that instance
+```
+
+Registration payload shape:
+
+```json
+{
+  "instance_id": "DESKTOP-123",
+  "gateway_url": "http://127.0.0.1:18789/v1/chat/completions",
+  "gateway_token": "<token>",
+  "gateway_port": "18789",
+  "source": "rl-training-headers",
+  "reason": "service_start",
+  "updated_at": "2026-05-14T00:00:00.000Z"
+}
+```
+
+## Logs
+
+The extension writes best-effort logs to:
+
+```text
+<OPENCLAW_STATE_DIR>/logs/rl-training-headers.log
+```
+
+or to the default OpenClaw state directory if `OPENCLAW_STATE_DIR` is not set.
+
+Useful messages:
+
+- `module loaded`
+- `resolved config ...`
+- `service start hook fired`
+- `registering gateway instance`
+- `registered gateway instance`
+- `before_prompt_build sessionId=...`
+- `agent_end clearing pending headers`
+
+## Validation
+
+1. Start `openclaw_client.py`.
+2. Start OpenClaw with the extension installed.
+3. Check extension logs for gateway registration.
+4. Send a normal OpenClaw prompt.
+5. Confirm the model request includes:
+
+```text
+X-Session-Id
+X-Turn-Type
+X-Instance-Id
+```
+
+6. Confirm the proxy writes a trajectory for the session.
+
+## Troubleshooting
+
+If registration fails:
+
+- verify `proxyRegisterUrl`
+- verify `openclaw_client.py` is running
+- verify the gateway token exists in OpenClaw state or is set through
+  `OPENCLAW_GATEWAY_TOKEN`
+- check `rl-training-headers.log`
+
+If headers are missing:
+
+- confirm `before_prompt_build` appears in the extension log
+- confirm the LLM request is a `POST`
+- confirm another extension is not replacing request headers after this one
+
+If `/clear-memory` fails:
+
+- confirm `task-commands` is installed and loaded
+- confirm `workspace/markdown_templates` exists
+- confirm OpenClaw can write to its workspace directory

@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+traces/
+usage/
+logs/
+gateway_tokens.json
+gateway_instances.json
+*.tmp
+.env
+.env.*
+!.env.example

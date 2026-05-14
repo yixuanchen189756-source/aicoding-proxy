@@ -1,0 +1,20 @@
+{
+  "id": "task-commands",
+  "name": "Task Commands",
+  "description": "Provides /clear-memory command to reset workspace .md files from templates",
+  "version": "1.0.0",
+  "entry": "./index.js",
+  "activation": {
+    "onStartup": true
+  },
+  "kind": "tool",
+  "contracts": {
+    "tools": [
+      "clear_memory"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {}
+  }
+}

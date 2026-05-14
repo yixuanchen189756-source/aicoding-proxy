@@ -1,0 +1,12 @@
+{
+  "name": "@openclaw/task-commands",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Provides /clear-memory command to reset workspace .md files from templates",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ]
+  }
+}
