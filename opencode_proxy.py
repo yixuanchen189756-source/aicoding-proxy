@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from client import main_profile
+from agent_proxy_core import main_profile
 
 
 if __name__ == "__main__":

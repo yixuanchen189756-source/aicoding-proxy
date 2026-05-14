@@ -3,8 +3,8 @@
 This folder contains the OpenClaw-specific integration assets for RL trajectory
 collection.
 
-OpenClaw is handled separately from the main `client.py` profiles. Use
-`proxy/openclaw_client.py` for OpenClaw because OpenClaw has its own gateway,
+OpenClaw is handled separately from the shared profile core. Use
+`proxy/openclaw_proxy.py` for OpenClaw because OpenClaw has its own gateway,
 instance registration, and internal-message patterns.
 
 ## Directory Layout
@@ -37,8 +37,9 @@ Start the OpenClaw-specific proxy from `proxy/`:
 python openclaw_proxy.py
 ```
 
-`openclaw_proxy.py` is a thin entrypoint that loads `config.yaml` and then runs
-`openclaw_client.py`.
+`openclaw_proxy.py` is the actual OpenClaw proxy service. It reads the top-level
+`openclaw` block from `proxy/config.yaml` for its listener port, upstream
+backend, and trajectory directory.
 
 By default, the current OpenClaw proxy listens on:
 
@@ -49,7 +50,7 @@ http://0.0.0.0:8908
 Set `OPENAI_PROXY_PORT` if you want a different port:
 
 ```bash
-OPENAI_PROXY_PORT=8288 python openclaw_client.py
+OPENAI_PROXY_PORT=8288 python openclaw_proxy.py
 ```
 
 The preferred persistent configuration is the top-level `openclaw` block in
@@ -66,16 +67,18 @@ Important environment variables:
 
 ```text
 VLLM_BASE_URL
-  Upstream backend base URL. Default in the code is local development oriented.
+  Optional override for the upstream backend base URL. Prefer configuring the
+  backend in proxy/config.yaml.
 
 VLLM_MODEL_NAME
-  Model name sent to the upstream backend.
+  Optional override for the model name sent to the upstream backend.
 
 VLLM_API_KEY
-  Upstream API key.
+  Optional override for the upstream API key.
 
 OPENAI_PROXY_PORT
-  Port for openclaw_client.py. Current code default: 8908.
+  Optional port override for openclaw_proxy.py. Prefer configuring
+  openclaw.port in proxy/config.yaml.
 
 OPENAI_PROXY_TRACE=1
   Print request/response trace summaries to stderr.
@@ -107,7 +110,7 @@ Purpose:
 - inject `X-Session-Id`
 - inject `X-Turn-Type`
 - inject `X-Instance-Id`
-- register the OpenClaw gateway URL/token with `openclaw_client.py`
+- register the OpenClaw gateway URL/token with `openclaw_proxy.py`
 
 Unlike OpenCode, OpenClaw does not provide the same native `chat.headers` hook.
 This extension uses OpenClaw lifecycle events and a narrow `globalThis.fetch`
@@ -214,7 +217,7 @@ Default resolution order:
 | `turnTypeHeader` | `X-Turn-Type` | Header name for turn type. |
 | `instanceIdHeader` | `X-Instance-Id` | Header name for instance ID. |
 | `instanceId` | environment or machine name | Stable OpenClaw instance ID. |
-| `proxyRegisterUrl` | `http://127.0.0.1:8288/register-instance` | Registration endpoint on `openclaw_client.py`. |
+| `proxyRegisterUrl` | `http://127.0.0.1:8288/register-instance` | Registration endpoint on `openclaw_proxy.py`. |
 | `gatewayUrl` | `http://127.0.0.1:<gatewayPort>/v1/chat/completions` | OpenClaw gateway URL. |
 | `gatewayToken` | read from OpenClaw state when possible | Gateway auth token. |
 | `gatewayPort` | `18789` | Local OpenClaw gateway port. |
@@ -236,7 +239,7 @@ Important: the extension default `proxyRegisterUrl` is `8288`, while the current
 OpenClaw proxy default port is `8908`. Use one of these approaches:
 
 ```text
-Option A: run openclaw_client.py on 8288
+Option A: run openclaw_proxy.py on 8288
   OPENAI_PROXY_PORT=8288 python openclaw_proxy.py
 
 Option B: point the extension to 8908
@@ -285,7 +288,7 @@ The intended flow is:
 OpenClaw starts
   -> rl-training-headers extension loads
   -> extension resolves gateway URL/token/instance ID
-  -> extension POSTs registration to openclaw_client.py
+  -> extension POSTs registration to openclaw_proxy.py
   -> proxy stores gateway_instances.json
   -> later LLM requests carry X-Instance-Id and X-Session-Id
   -> proxy can route/attribute requests for that instance
@@ -327,7 +330,7 @@ Useful messages:
 
 ## Validation
 
-1. Start `openclaw_client.py`.
+1. Start `openclaw_proxy.py`.
 2. Start OpenClaw with the extension installed.
 3. Check extension logs for gateway registration.
 4. Send a normal OpenClaw prompt.
@@ -346,7 +349,7 @@ X-Instance-Id
 If registration fails:
 
 - verify `proxyRegisterUrl`
-- verify `openclaw_client.py` is running
+- verify `openclaw_proxy.py` is running
 - verify the gateway token exists in OpenClaw state or is set through
   `OPENCLAW_GATEWAY_TOKEN`
 - check `rl-training-headers.log`

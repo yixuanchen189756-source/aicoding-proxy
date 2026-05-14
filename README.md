@@ -29,24 +29,21 @@ behavior while adding routing, traceability, and storage.
 
 ```text
 proxy/
-  client.py
-    Shared proxy core for OpenCode, Claude Code, and Hermes.
-    Can also run the legacy combined multi-port proxy.
+  agent_proxy_core.py
+    Shared proxy core for OpenCode, Claude Code, and Hermes. The independent
+    entrypoint scripts below import this file and select one profile each.
 
   opencode_proxy.py
   claude_code_proxy.py
   hermes_proxy.py
-    Independent single-agent entrypoints. Each registers only the routes needed
-    by that coding agent.
-
-  openclaw_client.py
-    OpenClaw-specific proxy logic. Handles OpenClaw gateway registration,
-    instance routing, token registries, OpenClaw internal-message handling, and
-    OpenClaw trajectory cleanup.
+    Independent single-agent entrypoints for OpenCode, Claude Code, and Hermes.
+    Each registers only the routes needed by that coding agent.
 
   openclaw_proxy.py
-    Thin OpenClaw entrypoint. Sets the default config path, then starts
-    openclaw_client.py.
+    OpenClaw-specific proxy logic. Handles OpenClaw gateway registration,
+    instance routing, token registries, OpenClaw internal-message handling, and
+    OpenClaw trajectory cleanup. Reads OpenClaw runtime settings from
+    config.yaml.
 
   config.yaml
     Main runtime configuration for model backends, agent profiles, OpenClaw
@@ -84,11 +81,22 @@ usage/
 
 ## Proxy Components
 
-### client.py
+### Shared Core and Independent Entrypoints
 
-[client.py](client.py) is the shared proxy core for OpenCode, Claude Code, and
-Hermes. It reads `profiles` from [config.yaml](config.yaml), and the listener
-port determines which profile handles a request.
+[agent_proxy_core.py](agent_proxy_core.py) is the shared proxy core for
+OpenCode, Claude Code, and Hermes. It is not an entrypoint. Start one of the
+independent entrypoint scripts instead:
+
+```bash
+python opencode_proxy.py
+python claude_code_proxy.py
+python hermes_proxy.py
+```
+
+Each entrypoint imports `agent_proxy_core.py`, selects exactly one profile from
+[config.yaml](config.yaml), and creates an app with only the routes needed by
+that coding agent. This keeps the runtime surface small and makes it clear which
+process owns which agent.
 
 Current main profiles:
 
@@ -98,23 +106,16 @@ Current main profiles:
 | Claude Code | `8906` | Anthropic Messages | Anthropic-to-OpenAI conversion when needed | `traces/claude-code` |
 | Hermes | `8907` | OpenAI-compatible | Direct OpenAI-format routing | `traces/hermes` |
 
-`client.py` can still run all valid profiles at once, but the independent
-entrypoints are preferred:
+There is intentionally no `client.py` entrypoint in this package. The split
+scripts are the supported deployment mode.
 
-```bash
-python opencode_proxy.py
-python claude_code_proxy.py
-python hermes_proxy.py
-```
+### openclaw_proxy.py
 
-Those entrypoints share the core logic in `client.py`, but each app registers
-only the routes used by its agent.
-
-### openclaw_client.py
-
-[openclaw_client.py](openclaw_client.py) is the OpenClaw-specific proxy. It does
-not use the normal `client.py` profile router because OpenClaw has its own
-gateway and instance model.
+[openclaw_proxy.py](openclaw_proxy.py) is the OpenClaw-specific proxy. It reads
+the top-level `openclaw` section from [config.yaml](config.yaml), then uses that
+configuration for the listener port, upstream backend, and trajectory directory.
+It does not use `agent_proxy_core.py` because OpenClaw has its own gateway and
+instance model.
 
 OpenClaw-specific handling includes:
 
@@ -152,8 +153,8 @@ Claude Code:
 - `/v1/{path:path}`
 - `POST /_agent/session-event`
 
-The legacy combined entrypoint, `python client.py`, still registers the broader
-debug/management routes, including:
+The independent profile entrypoints intentionally do not expose broad debug or
+management routes such as:
 
 - `GET /backends`
 - `GET /usage`
@@ -231,8 +232,8 @@ are unusable, the process exits.
 
 ### openclaw
 
-OpenClaw is not in `profiles` because it is handled by `openclaw_client.py`, not
-by the normal `client.py` profile router.
+OpenClaw is not in `profiles` because it is handled directly by
+`openclaw_proxy.py`, not by the shared profile core.
 
 ```yaml
 openclaw:
@@ -271,7 +272,8 @@ Install Python dependencies:
 pip install fastapi uvicorn aiohttp pyyaml prometheus-client
 ```
 
-Recommended: start the four proxies as separate processes.
+Recommended: start the four proxies as separate processes. Each script owns one
+agent and one configured port.
 
 ```bash
 cd proxy
@@ -281,16 +283,8 @@ python hermes_proxy.py
 python openclaw_proxy.py
 ```
 
-You can also start the legacy combined proxy:
-
-```bash
-cd proxy
-python client.py
-```
-
-The combined proxy serves all valid profiles concurrently. The independent
-scripts are better for production and debugging because each process owns one
-agent.
+There is no combined `client.py` startup path. OpenClaw is always started
+through `openclaw_proxy.py`; it is not part of the shared profile router.
 
 Quick checks:
 
@@ -405,7 +399,7 @@ plugin in
 does two things:
 
 - injects `X-Session-Id`, `X-Turn-Type`, and `X-Instance-Id` into LLM requests
-- registers the OpenClaw gateway URL/token with `openclaw_client.py`
+- registers the OpenClaw gateway URL/token with `openclaw_proxy.py`
 
 OpenClaw runtime settings live in the top-level `openclaw` section of
 `config.yaml`:
@@ -507,7 +501,7 @@ Expected response:
 From the repository root:
 
 ```bash
-python -B -m py_compile proxy/client.py proxy/opencode_proxy.py proxy/claude_code_proxy.py proxy/hermes_proxy.py proxy/openclaw_client.py proxy/openclaw_proxy.py
+python -B -m py_compile proxy/agent_proxy_core.py proxy/opencode_proxy.py proxy/claude_code_proxy.py proxy/hermes_proxy.py proxy/openclaw_proxy.py
 python -m unittest discover -s tests -v
 ```
 
@@ -524,4 +518,3 @@ of the current repository structure.
   exposing it beyond a private machine or tailnet.
 - Claude Code hooks should be best-effort: if the proxy is temporarily
   unavailable, the hook should log the failure but must not block Claude Code.
-

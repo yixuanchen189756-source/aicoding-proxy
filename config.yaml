@@ -86,7 +86,7 @@ profiles:
     usage_json: "usage/hermes/usage.json"
     require_agent_header: false
 
-# OpenClaw uses proxy/openclaw_client.py, not the main multi-profile client.py.
+# OpenClaw uses proxy/openclaw_proxy.py, not the shared profile core.
 # Keep its runtime settings here so model/provider configuration lives in one file.
 openclaw:
   port: 8908

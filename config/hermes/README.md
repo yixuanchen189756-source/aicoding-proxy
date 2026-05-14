@@ -3,7 +3,7 @@
 This document describes how Hermes should be configured to use the AI Coding
 Proxy and how to inject RL trajectory headers into Hermes LLM requests.
 
-Hermes uses the OpenAI-compatible profile in `proxy/client.py`.
+Hermes uses the OpenAI-compatible profile served by `proxy/hermes_proxy.py`.
 
 ## Proxy Endpoint
 
@@ -280,7 +280,7 @@ Expected:
 
 ```bash
 curl http://<proxy-host>:8907/health
-curl http://<proxy-host>:8907/backends
+curl http://<proxy-host>:8907/v1/models
 ```
 
 ### 4. End-to-End Header Check
@@ -355,4 +355,3 @@ If requests fail before reaching the model:
 - confirm Hermes base URL is `http://<proxy-host>:8907/v1`
 - confirm proxy `hermes` profile is valid at startup
 - confirm upstream backend credentials in `proxy/config.yaml`
-

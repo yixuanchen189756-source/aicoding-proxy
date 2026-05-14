@@ -21,22 +21,20 @@
 
 ```text
 proxy/
-  client.py
-    主代理核心。支持 OpenCode、Claude Code、Hermes 三个 profile。
-    也可以作为旧的多端口合并入口一次性启动三者。
+  agent_proxy_core.py
+    OpenCode、Claude Code、Hermes 共享的代理核心。下面三个独立入口脚本
+    会导入这个文件，并且每次只选择一个 profile。
 
   opencode_proxy.py
   claude_code_proxy.py
   hermes_proxy.py
-    三个独立 agent 入口。每个脚本只启动对应 agent 真正需要的接口。
-
-  openclaw_client.py
-    OpenClaw 专用代理逻辑。负责 OpenClaw gateway 注册、instance 路由、
-    token registry、OpenClaw 内部消息处理和轨迹整理。
+    OpenCode、Claude Code、Hermes 的独立 agent 入口。每个脚本只启动对应
+    agent 真正需要的接口。
 
   openclaw_proxy.py
-    OpenClaw 代理的薄入口。会先设置默认 config.yaml 路径，再启动
-    openclaw_client.py。
+    OpenClaw 专用代理逻辑。负责 OpenClaw gateway 注册、instance 路由、
+    token registry、OpenClaw 内部消息处理和轨迹整理，并从 config.yaml
+    读取 OpenClaw 运行配置。
 
   config.yaml
     主运行配置。包含模型后端、agent profile、OpenClaw 运行配置、
@@ -73,9 +71,17 @@ usage/
 
 ## 代理组成
 
-### client.py
+### 共享核心和独立入口
 
-[client.py](client.py) 是 OpenCode、Claude Code、Hermes 的共享代理核心。它从 [config.yaml](config.yaml) 读取 `profiles`，根据监听端口判断当前请求属于哪个 agent profile。
+[agent_proxy_core.py](agent_proxy_core.py) 是 OpenCode、Claude Code、Hermes 的共享代理核心。它不是启动入口；正常使用时请启动对应的独立入口脚本：
+
+```bash
+python opencode_proxy.py
+python claude_code_proxy.py
+python hermes_proxy.py
+```
+
+每个入口脚本都会导入 `agent_proxy_core.py`，从 [config.yaml](config.yaml) 中只选择自己的 profile，并创建一个只包含该 coding agent 所需接口的 app。这样每个进程负责一个 agent，部署和排查问题都更清楚。
 
 当前三个主 profile：
 
@@ -85,19 +91,11 @@ usage/
 | Claude Code | `8906` | Anthropic Messages | 必要时转换为 OpenAI chat/completions | `traces/claude-code` |
 | Hermes | `8907` | OpenAI-compatible | 直接转发 OpenAI 格式请求 | `traces/hermes` |
 
-`client.py` 仍然支持一次性启动所有有效 profile，但现在更推荐使用独立入口：
+这个包里有意不再提供 `client.py` 入口。拆分后的独立脚本就是支持的部署方式。
 
-```bash
-python opencode_proxy.py
-python claude_code_proxy.py
-python hermes_proxy.py
-```
+### openclaw_proxy.py
 
-这些独立入口共享 `client.py` 的核心逻辑，但每个 app 只注册对应 agent 需要的路由。
-
-### openclaw_client.py
-
-[openclaw_client.py](openclaw_client.py) 是 OpenClaw 专用代理，不和前三个 agent 共用 `client.py` 的 profile 路由。
+[openclaw_proxy.py](openclaw_proxy.py) 是 OpenClaw 专用代理。它会读取 [config.yaml](config.yaml) 顶层的 `openclaw` 配置，并据此设置监听端口、上游 backend 和轨迹目录。它不和前三个 agent 共用 `agent_proxy_core.py`，因为 OpenClaw 有自己的 gateway 和 instance 模型。
 
 OpenClaw 比其他 agent 多了 gateway 和 instance 概念，所以它需要额外处理：
 
@@ -135,7 +133,7 @@ Claude Code：
 - `/v1/{path:path}`
 - `POST /_agent/session-event`
 
-旧的合并入口 `python client.py` 仍然会注册完整调试/管理接口，例如：
+独立 profile 入口有意不暴露宽泛的调试/管理接口，例如：
 
 - `GET /backends`
 - `GET /usage`
@@ -207,7 +205,7 @@ profiles:
 
 ### openclaw
 
-OpenClaw 不放在 `profiles` 里，因为它不是 `client.py` 的普通 profile，而是由 `openclaw_client.py` 专门处理。
+OpenClaw 不放在 `profiles` 里，因为它由 `openclaw_proxy.py` 直接处理，而不是普通的共享 profile。
 
 ```yaml
 openclaw:
@@ -246,7 +244,7 @@ proxy:
 pip install fastapi uvicorn aiohttp pyyaml prometheus-client
 ```
 
-推荐分别启动四个独立代理：
+推荐分别启动四个独立代理。每个脚本负责一个 agent 和一个配置好的端口：
 
 ```bash
 cd proxy
@@ -256,14 +254,7 @@ python hermes_proxy.py
 python openclaw_proxy.py
 ```
 
-也可以启动旧的合并主代理：
-
-```bash
-cd proxy
-python client.py
-```
-
-合并主代理会并发服务所有有效 profile。独立脚本更适合生产部署和调试，因为每个进程只负责一个 agent。
+这个包里没有合并式 `client.py` 启动路径。OpenClaw 始终通过 `openclaw_proxy.py` 启动；它不属于共享 profile router。
 
 快速检查：
 
@@ -364,7 +355,7 @@ python openclaw_proxy.py
 OpenClaw 和前三者不同，因为它有自己的 gateway 和 instance 模型。[config/openclaw/extensions/rl-training-headers](config/openclaw/extensions/rl-training-headers) 插件负责：
 
 - 给 LLM 请求注入 `X-Session-Id`、`X-Turn-Type`、`X-Instance-Id`
-- 向 `openclaw_client.py` 注册 OpenClaw gateway URL/token
+- 向 `openclaw_proxy.py` 注册 OpenClaw gateway URL/token
 
 OpenClaw 的运行配置在 `config.yaml` 顶层 `openclaw` 段：
 
@@ -461,7 +452,7 @@ curl -X POST http://127.0.0.1:8906/_agent/session-event \
 在仓库根目录运行：
 
 ```bash
-python -B -m py_compile proxy/client.py proxy/opencode_proxy.py proxy/claude_code_proxy.py proxy/hermes_proxy.py proxy/openclaw_client.py proxy/openclaw_proxy.py
+python -B -m py_compile proxy/agent_proxy_core.py proxy/opencode_proxy.py proxy/claude_code_proxy.py proxy/hermes_proxy.py proxy/openclaw_proxy.py
 python -m unittest discover -s tests -v
 ```
 
