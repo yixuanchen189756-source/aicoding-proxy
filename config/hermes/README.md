@@ -259,7 +259,7 @@ python -m py_compile cron/scheduler.py
 ```python
 import yaml
 
-with open("/root/.hermes/config.yaml", "r", encoding="utf-8") as f:
+with open("~/.hermes/config.yaml", "r", encoding="utf-8") as f:
     cfg = yaml.safe_load(f)
 
 print(cfg.get("rl_training_headers", {}))

@@ -262,20 +262,20 @@ Copy the extension folders into the OpenClaw extension location used by your
 installation. A typical Windows layout is:
 
 ```text
-C:\Users\<you>\.openclaw\extensions\rl-training-headers
-C:\Users\<you>\.openclaw\extensions\task-commands
+<user-home>/.openclaw/extensions/rl-training-headers
+<user-home>/.openclaw/extensions/task-commands
 ```
 
 Copy the skill:
 
 ```text
-C:\Users\<you>\.openclaw\skills\clear-memory
+<user-home>/.openclaw/skills/clear-memory
 ```
 
 Copy or merge workspace templates:
 
 ```text
-C:\Users\<you>\.openclaw\workspace\markdown_templates
+<user-home>/.openclaw/workspace/markdown_templates
 ```
 
 After copying, restart OpenClaw or reload its extensions.

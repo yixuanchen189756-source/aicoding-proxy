@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 set "HOOK_LOG=%CLAUDE_CODE_HOOK_LOG%"
-if not defined HOOK_LOG set "HOOK_LOG=D:\aicoding_proxy\logs\claude.txt"
+if not defined HOOK_LOG set "HOOK_LOG=%~dp0claude_code_session_hook.log"
 
 for %%I in ("%HOOK_LOG%") do if not exist "%%~dpI" mkdir "%%~dpI" >nul 2>nul
 

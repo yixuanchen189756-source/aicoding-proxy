@@ -380,7 +380,7 @@ openclaw:
   "session_id": "session-id",
   "run_id": "ccrun_workspace_machine_timestamp",
   "workspace_id": "ws_abc123",
-  "workspace": "D:\\project",
+  "workspace": "<workspace-path>",
   "session_source": "registry",
   "messages": [
     {"role": "system", "content": "..."},

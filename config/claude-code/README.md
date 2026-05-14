@@ -44,21 +44,15 @@ In Claude Code environment terms:
 ANTHROPIC_BASE_URL=http://<proxy-host>:8906/v1
 ```
 
-If the proxy is running on the current project host, the deployed setup has used:
-
-```text
-http://100.64.0.132:8906/v1
-```
-
 The hook posts session events to:
 
 ```text
 http://<proxy-host>:8906/_agent/session-event
 ```
 
-The current hook script has `DEFAULT_SESSION_EVENT_URL` set in
-`hooks/claude_code_session_hook.py`. If the proxy host changes, update that
-constant or set up your own copy of the hook with the correct target.
+The hook script defaults to `http://127.0.0.1:8906/_agent/session-event`. If the
+proxy runs on another host, set `CLAUDE_CODE_SESSION_EVENT_URL` instead of
+editing the script.
 
 ## Required Request Headers
 
@@ -91,7 +85,7 @@ Good:
 ANTHROPIC_CUSTOM_HEADERS=X-Agent-Name: claude-code
 X-Agent-Run-Id: ccrun_ws_abc123_machine_123456
 X-Agent-Workspace-Id: ws_abc123
-X-Agent-Workspace: D:\my-project
+X-Agent-Workspace: <workspace-path>
 X-Instance-Id: DESKTOP-123
 ```
 
@@ -115,12 +109,13 @@ CLAUDE_CODE_RUN_ID=<same value as X-Agent-Run-Id>
 CLAUDE_CODE_WORKSPACE_ID=<same value as X-Agent-Workspace-Id>
 CLAUDE_CODE_WORKSPACE=<workspace path>
 CLAUDE_CODE_INSTANCE_ID=<machine or instance id>
+CLAUDE_CODE_SESSION_EVENT_URL=http://<proxy-host>:8906/_agent/session-event
 ```
 
 Optional:
 
 ```text
-CLAUDE_CODE_HOOK_LOG=D:\aicoding_proxy\logs\claude.txt
+CLAUDE_CODE_HOOK_LOG=<writable-log-path>
 CLAUDE_CODE_HOOK_PYTHON=python
 ```
 
@@ -162,14 +157,14 @@ traces/claude-code/<workspace_id>/<session_id>/metadata.json
 Copy the hook folder to a stable location, for example:
 
 ```text
-C:\Users\<you>\.claude\hooks\
+<user-home>/.claude/hooks/
 ```
 
 Expected layout:
 
 ```text
-C:\Users\<you>\.claude\hooks\claude_code_session_hook.bat
-C:\Users\<you>\.claude\hooks\claude_code_session_hook.py
+<user-home>/.claude/hooks/claude_code_session_hook.bat
+<user-home>/.claude/hooks/claude_code_session_hook.py
 ```
 
 On Windows, configure Claude Code to run the `.bat` hook through PowerShell.
@@ -180,7 +175,7 @@ Example command value:
 
 ```json
 {
-  "command": "C:\\Users\\PC-M\\.claude\\hooks\\claude_code_session_hook.bat",
+  "command": "<user-home>\\.claude\\hooks\\claude_code_session_hook.bat",
   "shell": "powershell"
 }
 ```
@@ -205,7 +200,7 @@ directly from Claude Code hook settings:
 
 ```json
 {
-  "command": "python3 /home/me/.claude/hooks/claude_code_session_hook.py"
+  "command": "python3 ~/.claude/hooks/claude_code_session_hook.py"
 }
 ```
 
@@ -220,7 +215,7 @@ export CLAUDE_CODE_HOOK_LOG="$HOME/.claude/logs/rl-session-hook.log"
 The hook writes diagnostics to:
 
 ```text
-D:\aicoding_proxy\logs\claude.txt
+<hook-directory>/claude_code_session_hook.log
 ```
 
 or to `CLAUDE_CODE_HOOK_LOG` if set.
@@ -243,7 +238,7 @@ does not break Claude Code.
 ```bash
 curl -X POST http://<proxy-host>:8906/_agent/session-event \
   -H "Content-Type: application/json" \
-  -d '{"agent_name":"claude-code","run_id":"test-run","workspace_id":"test-workspace","workspace":"D:\\project","session_id":"test-session","hook_event_name":"SessionStart"}'
+  -d '{"agent_name":"claude-code","run_id":"test-run","workspace_id":"test-workspace","workspace":"<workspace-path>","session_id":"test-session","hook_event_name":"SessionStart"}'
 ```
 
 Expected response:
@@ -294,4 +289,3 @@ If custom headers arrive as one malformed header:
 
 - change `ANTHROPIC_CUSTOM_HEADERS` to newline-separated headers
 - restart Claude Code from the environment that sets those variables
-

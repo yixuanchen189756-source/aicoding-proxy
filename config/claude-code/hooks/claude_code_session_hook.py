@@ -12,8 +12,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 
-DEFAULT_LOG_PATH = Path(r"D:\aicoding_proxy\logs\claude.txt")
-DEFAULT_SESSION_EVENT_URL = "http://100.64.0.132:8906/_agent/session-event"
+DEFAULT_LOG_PATH = Path(__file__).resolve().parent / "claude_code_session_hook.log"
+DEFAULT_SESSION_EVENT_URL = "http://127.0.0.1:8906/_agent/session-event"
 
 
 def _now() -> str:
@@ -22,6 +22,10 @@ def _now() -> str:
 
 def _log_path() -> Path:
     return Path(os.environ.get("CLAUDE_CODE_HOOK_LOG") or DEFAULT_LOG_PATH)
+
+
+def _session_event_url() -> str:
+    return os.environ.get("CLAUDE_CODE_SESSION_EVENT_URL", DEFAULT_SESSION_EVENT_URL).strip()
 
 
 def debug_log(message: str, data: object | None = None) -> None:
@@ -151,7 +155,7 @@ def main() -> int:
         "prompt": event.get("prompt"),
         "timestamp": _now(),
     }
-    target = DEFAULT_SESSION_EVENT_URL
+    target = _session_event_url()
     debug_log("POST prepared", {"target": target, "payload": payload})
     try:
         status, reason, response_body = _post_json_no_proxy(target, payload)

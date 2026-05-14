@@ -303,7 +303,7 @@ console.log(output.headers);
 ## 八、完整文件清单
 
 ```
-/home/lrs/random/rl-training-headers/
+<opencode-plugin-root>/rl-training-headers/
 ├── index.js                    ← OpenCode 插件入口（主）
 ├── index.ts                    ← 参考入口（TypeScript 版本）
 ├── package.json                ← 包配置
@@ -315,13 +315,13 @@ console.log(output.headers);
 OpenCode 配置：
 
 ```
-/root/.config/opencode/
+~/.config/opencode/
 ├── opencode.json               ← plugin: ["rl-training-headers"]
 └── ...
 
-/root/.cache/opencode/packages/
+~/.cache/opencode/packages/
 └── rl-training-headers@latest/ ← 插件的缓存副本
     ├── package.json
     └── node_modules/
-        └── rl-training-headers/ → symlink to /home/lrs/random/rl-training-headers/
+        └── rl-training-headers/ → symlink to <opencode-plugin-root>/rl-training-headers/
 ```
