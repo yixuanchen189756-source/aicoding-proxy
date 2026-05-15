@@ -177,12 +177,62 @@ class Config:
 _ENV_REF_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 
 
+def _load_dotenv_file(path: Path) -> None:
+    """Load simple KEY=VALUE entries without overriding the process environment."""
+    if not path.exists() or not path.is_file():
+        return
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        print(f"[config-warning] could not read dotenv file {path}: {exc}", file=sys.stderr, flush=True)
+        return
+
+    loaded = 0
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
+            continue
+        if key in os.environ:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ[key] = value
+        loaded += 1
+    if loaded:
+        print(f"[config] loaded {loaded} value(s) from {path}", file=sys.stderr, flush=True)
+
+
+def _load_dotenv_for_config(config_path: Path) -> None:
+    """Load local dotenv values before expanding config placeholders."""
+    candidates = [config_path.with_name(".env"), Path(__file__).with_name(".env")]
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        _load_dotenv_file(candidate)
+
+
 def _expand_env_value(value: Any) -> Any:
     """Expand ${ENV_NAME} strings recursively in config values."""
     if isinstance(value, str):
         m = _ENV_REF_RE.match(value.strip())
         if m:
-            return os.getenv(m.group(1), "")
+            name = m.group(1)
+            if name not in os.environ:
+                print(
+                    f"[config-warning] environment variable {name} is not set; "
+                    f"config placeholder ${{{name}}} expanded to an empty string",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return os.getenv(name, "")
         return value
     if isinstance(value, list):
         return [_expand_env_value(v) for v in value]
@@ -340,6 +390,7 @@ def load_config() -> Config:
 
     if not path.exists():
         raise ConfigError(f"configuration file not found: {path}")
+    _load_dotenv_for_config(path)
 
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
