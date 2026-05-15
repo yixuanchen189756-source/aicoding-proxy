@@ -25,7 +25,7 @@ OpenAI 兼容代理服务
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://localhost:8081/v1",
+    base_url="http://<proxy-host>:8908/v1",
     api_key="dummy"  # 本服务不需要认证
 )
 
@@ -37,7 +37,7 @@ print(response.choices[0].message.content)
 ```
 
 【配置】
-- VLLM_BASE_URL: vLLM后端地址（默认 http://127.0.0.1:8078）
+- VLLM_BASE_URL: vLLM后端地址（必须显式配置，或由 config.yaml 的 openclaw.backend 指定）
 - OPENAI_PROXY_PORT: 本服务端口（默认 8081）
 - OPENAI_PROXY_TRACE=1: 将 /v1/chat/completions 的用户输入与上游响应摘要打印到 stderr
 - OPENAI_PROXY_SESSION_FOLDER: 轨迹存储文件夹，每个轨迹保存为 trajectory_{n}.json
@@ -312,9 +312,10 @@ def _apply_upstream_request_config(
 _UPSTREAM_BACKEND_SETTINGS = _load_upstream_backend_settings()
 _OPENCLAW_PROXY_SETTINGS = _load_openclaw_proxy_settings()
 
-VLLM_BASE_URL = (
-    os.getenv("VLLM_BASE_URL", _UPSTREAM_BACKEND_SETTINGS.get("base_url") or "http://127.0.0.1:8078").rstrip("/") + "/"
-)
+_configured_vllm_base_url = (os.getenv("VLLM_BASE_URL") or _UPSTREAM_BACKEND_SETTINGS.get("base_url") or "").strip()
+if not _configured_vllm_base_url:
+    raise RuntimeError("OpenClaw upstream base URL is required; set VLLM_BASE_URL or configure openclaw.backend in config.yaml")
+VLLM_BASE_URL = _configured_vllm_base_url.rstrip("/") + "/"
 
 VLLM_MODEL_NAME = (
     os.getenv("VLLM_MODEL_NAME", _UPSTREAM_BACKEND_SETTINGS.get("model") or "glm-5-fp8").strip()
@@ -1805,7 +1806,7 @@ async def _startup() -> None:
     )
     print(
         f"[startup] openclaw proxy is listening on http://0.0.0.0:{PROXY_PORT} "
-        f"(health: http://127.0.0.1:{PROXY_PORT}/health, upstream: {VLLM_BASE_URL.rstrip('/')})",
+        f"(health: http://<proxy-host>:{PROXY_PORT}/health, upstream: {VLLM_BASE_URL.rstrip('/')})",
         file=sys.stderr,
         flush=True,
     )

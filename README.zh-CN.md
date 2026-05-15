@@ -162,13 +162,13 @@ python openclaw_proxy.py
 健康检查：
 
 ```bash
-curl http://127.0.0.1:8905/health
-curl http://127.0.0.1:8906/health
-curl http://127.0.0.1:8907/health
-curl http://127.0.0.1:8908/health
+curl http://<proxy-host>:8905/health
+curl http://<proxy-host>:8906/health
+curl http://<proxy-host>:8907/health
+curl http://<proxy-host>:8908/health
 ```
 
-如果代理运行在另一台机器上，把 `127.0.0.1` 换成代理主机或 tailnet IP。
+这里使用 coding agent 所在机器能访问到的代理主机或 tailnet IP。
 
 ## Agent 接入
 

@@ -2095,6 +2095,111 @@ def _is_title_generation_request(request_summary: dict[str, Any]) -> bool:
     return False
 
 
+def _strip_thinking_block(text: str) -> str:
+    return re.sub(r"^\s*<think>.*?</think>\s*", "", text, flags=re.DOTALL)
+
+
+def _is_new_topic_detection_response(response_summary: dict[str, Any]) -> bool:
+    text = (
+        response_summary.get("assistant_visible_reply")
+        or response_summary.get("assistant_content_full")
+        or response_summary.get("text")
+        or ""
+    )
+    if not isinstance(text, str) or not text.strip():
+        return False
+    try:
+        obj = json.loads(_strip_markdown_json_fence(_strip_thinking_block(text)))
+    except Exception:
+        return False
+    if not isinstance(obj, dict):
+        return False
+    keys = set(obj.keys())
+    return "isNewTopic" in keys and "title" in keys and keys <= {"isNewTopic", "title"}
+
+
+def _is_new_topic_detection_request(request_summary: dict[str, Any]) -> bool:
+    messages = request_summary.get("messages")
+    if not isinstance(messages, list):
+        return False
+
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "system":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        normalized = content.lower()
+        if (
+            "analyze if this message indicates a new conversation topic" in normalized
+            and "isnewtopic" in normalized
+            and "title" in normalized
+            and "json object" in normalized
+        ):
+            return True
+    return False
+
+
+def _is_conversation_summary_request(request_summary: dict[str, Any]) -> bool:
+    messages = request_summary.get("messages")
+    if not isinstance(messages, list):
+        return False
+
+    has_summary_system = False
+    has_title_user = False
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        normalized = content.lower()
+        if message.get("role") == "system" and (
+            "summarize this coding conversation in under 50 characters" in normalized
+        ):
+            has_summary_system = True
+        if message.get("role") == "user" and (
+            "please write a 5-10 word title for the following conversation" in normalized
+        ):
+            has_title_user = True
+    return has_summary_system and has_title_user
+
+
+def _trace_message_roles(messages: Any) -> list[str]:
+    if not isinstance(messages, list):
+        return []
+    roles: list[str] = []
+    for message in messages:
+        if isinstance(message, dict):
+            roles.append(str(message.get("role") or ""))
+        else:
+            roles.append(type(message).__name__)
+    return roles
+
+
+def _first_system_excerpt(messages: Any) -> str | None:
+    if not isinstance(messages, list):
+        return None
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "system":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            return _truncate(content.replace("\n", "\\n"), 500)
+    return None
+
+
+def _assistant_response_excerpt(response_summary: dict[str, Any]) -> str:
+    text = (
+        response_summary.get("assistant_visible_reply")
+        or response_summary.get("assistant_content_full")
+        or response_summary.get("text")
+        or response_summary.get("raw_body")
+        or ""
+    )
+    return _truncate(str(text).replace("\n", "\\n"), 500)
+
+
 def _request_trace_with_merged_assistant(
     request_summary: dict[str, Any],
     response_summary: dict[str, Any],
@@ -2140,13 +2245,44 @@ async def _overwrite_session_trace(
     if isinstance(session_context, str):
         session_context = {"session_id": session_context}
     session_id = str(session_context.get("session_id") or "__no_session_id__")
-    if _is_title_generation_request(request_summary) or _is_title_generation_response(response_summary):
+    title_request = _is_title_generation_request(request_summary)
+    title_response = _is_title_generation_response(response_summary)
+    topic_request = _is_new_topic_detection_request(request_summary)
+    topic_response = _is_new_topic_detection_response(response_summary)
+    summary_request = _is_conversation_summary_request(request_summary)
+    if title_request or title_response or topic_request or topic_response or summary_request:
+        _trace_log("trace_skip_internal_request", {
+            "profile": profile_name,
+            "session_id": session_id,
+            "run_id": session_context.get("run_id"),
+            "workspace_id": session_context.get("workspace_id"),
+            "reason": {
+                "title_request": title_request,
+                "title_response": title_response,
+                "new_topic_request": topic_request,
+                "new_topic_response": topic_response,
+                "conversation_summary_request": summary_request,
+            },
+            "request_message_roles": _trace_message_roles(request_summary.get("messages")),
+            "first_system_excerpt": _first_system_excerpt(request_summary.get("messages")),
+            "assistant_response_excerpt": _assistant_response_excerpt(response_summary),
+        })
         return
     merged = _request_trace_with_merged_assistant(request_summary, response_summary)
     raw_msgs = merged.get("messages")
     if not isinstance(raw_msgs, list):
         raw_msgs = []
     msgs = _strip_ids_from_tool_calls(_normalize_trace_messages(raw_msgs))
+    _trace_log("trace_write_snapshot", {
+        "profile": profile_name,
+        "session_id": session_id,
+        "run_id": session_context.get("run_id"),
+        "workspace_id": session_context.get("workspace_id"),
+        "request_message_roles": _trace_message_roles(request_summary.get("messages")),
+        "final_message_roles": _trace_message_roles(msgs),
+        "first_system_excerpt": _first_system_excerpt(request_summary.get("messages")),
+        "assistant_response_excerpt": _assistant_response_excerpt(response_summary),
+    })
     tools = merged.get("tools")
     if tools is not None and not isinstance(tools, list):
         tools = None
@@ -3027,7 +3163,7 @@ def create_profile_app(profile_name: str) -> FastAPI:
             return
         print(
             f"[startup] {profile_name} proxy is listening on http://0.0.0.0:{profile.port} "
-            f"(health: http://127.0.0.1:{profile.port}/health)",
+            f"(health: http://<proxy-host>:{profile.port}/health)",
             file=sys.stderr,
             flush=True,
         )

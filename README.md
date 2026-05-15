@@ -163,13 +163,13 @@ python openclaw_proxy.py
 Health checks:
 
 ```bash
-curl http://127.0.0.1:8905/health
-curl http://127.0.0.1:8906/health
-curl http://127.0.0.1:8907/health
-curl http://127.0.0.1:8908/health
+curl http://<proxy-host>:8905/health
+curl http://<proxy-host>:8906/health
+curl http://<proxy-host>:8907/health
+curl http://<proxy-host>:8908/health
 ```
 
-If the proxy runs on another machine, replace `127.0.0.1` with the proxy host or tailnet IP.
+Use the proxy host or tailnet IP that your coding-agent machine can reach.
 
 ## Agent Setup
 

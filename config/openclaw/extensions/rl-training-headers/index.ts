@@ -87,11 +87,11 @@ function resolveConfig(api: OpenClawPluginApi): RlTrainingConfig {
     proxyRegisterUrl:
       cfg.proxyRegisterUrl ??
       process.env.OPENCLAW_PROXY_REGISTER_URL ??
-      "http://127.0.0.1:8288/register-instance",
+      "",
     gatewayUrl:
       cfg.gatewayUrl ??
       process.env.OPENCLAW_GATEWAY_URL ??
-      `http://127.0.0.1:${gatewayPort}/v1/chat/completions`,
+      "",
     gatewayToken:
       cfg.gatewayToken ??
       process.env.OPENCLAW_GATEWAY_TOKEN ??
@@ -124,6 +124,10 @@ export default function register(api: OpenClawPluginApi) {
     }
     if (!config.gatewayToken) {
       log(api, "warn", "missing gatewayToken; cannot register gateway instance");
+      return;
+    }
+    if (!config.proxyRegisterUrl || !config.gatewayUrl) {
+      log(api, "warn", "missing proxyRegisterUrl or gatewayUrl; cannot register gateway instance");
       return;
     }
     log(api, "info", `registering gateway instance (${reason}) at ${config.proxyRegisterUrl}`);

@@ -204,8 +204,8 @@ cron
 | `turnTypeHeader` | `X-Turn-Type` | turn type header 名称。 |
 | `instanceIdHeader` | `X-Instance-Id` | instance ID header 名称。 |
 | `instanceId` | environment or machine name | 稳定的 OpenClaw instance ID。 |
-| `proxyRegisterUrl` | `http://127.0.0.1:8288/register-instance` | `openclaw_proxy.py` 上的注册端点。 |
-| `gatewayUrl` | `http://127.0.0.1:<gatewayPort>/v1/chat/completions` | OpenClaw gateway URL。 |
+| `proxyRegisterUrl` | 必填 | `openclaw_proxy.py` 上的注册端点。 |
+| `gatewayUrl` | 必填 | OpenClaw gateway URL。 |
 | `gatewayToken` | read from OpenClaw state when possible | Gateway auth token。 |
 | `gatewayPort` | `18789` | 本地 OpenClaw gateway 端口。 |
 | `registerOnStart` | `true` | 是否在 service start 时注册。 |
@@ -229,7 +229,7 @@ Option A: run openclaw_proxy.py on 8288
   OPENAI_PROXY_PORT=8288 python openclaw_proxy.py
 
 Option B: point the extension to 8908
-  OPENCLAW_PROXY_REGISTER_URL=http://127.0.0.1:8908/register-instance
+  OPENCLAW_PROXY_REGISTER_URL=http://<proxy-host>:8908/register-instance
 ```
 
 两个值必须匹配，否则 gateway registration 会失败。
@@ -284,7 +284,7 @@ OpenClaw starts
 ```json
 {
   "instance_id": "DESKTOP-123",
-  "gateway_url": "http://127.0.0.1:18789/v1/chat/completions",
+  "gateway_url": "http://<openclaw-gateway-host>:18789/v1/chat/completions",
   "gateway_token": "<token>",
   "gateway_port": "18789",
   "source": "rl-training-headers",

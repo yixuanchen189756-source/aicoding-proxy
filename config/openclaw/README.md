@@ -219,8 +219,8 @@ Default resolution order:
 | `turnTypeHeader` | `X-Turn-Type` | Header name for turn type. |
 | `instanceIdHeader` | `X-Instance-Id` | Header name for instance ID. |
 | `instanceId` | environment or machine name | Stable OpenClaw instance ID. |
-| `proxyRegisterUrl` | `http://127.0.0.1:8288/register-instance` | Registration endpoint on `openclaw_proxy.py`. |
-| `gatewayUrl` | `http://127.0.0.1:<gatewayPort>/v1/chat/completions` | OpenClaw gateway URL. |
+| `proxyRegisterUrl` | Required | Registration endpoint on `openclaw_proxy.py`. |
+| `gatewayUrl` | Required | OpenClaw gateway URL. |
 | `gatewayToken` | read from OpenClaw state when possible | Gateway auth token. |
 | `gatewayPort` | `18789` | Local OpenClaw gateway port. |
 | `registerOnStart` | `true` | Whether to register at service start. |
@@ -245,7 +245,7 @@ Option A: run openclaw_proxy.py on 8288
   OPENAI_PROXY_PORT=8288 python openclaw_proxy.py
 
 Option B: point the extension to 8908
-  OPENCLAW_PROXY_REGISTER_URL=http://127.0.0.1:8908/register-instance
+  OPENCLAW_PROXY_REGISTER_URL=http://<proxy-host>:8908/register-instance
 ```
 
 The two values must match or gateway registration will fail.
@@ -301,7 +301,7 @@ Registration payload shape:
 ```json
 {
   "instance_id": "DESKTOP-123",
-  "gateway_url": "http://127.0.0.1:18789/v1/chat/completions",
+  "gateway_url": "http://<openclaw-gateway-host>:18789/v1/chat/completions",
   "gateway_token": "<token>",
   "gateway_port": "18789",
   "source": "rl-training-headers",
