@@ -2968,6 +2968,20 @@ def create_profile_app(profile_name: str) -> FastAPI:
     """Create a minimal app for one coding-agent profile."""
     profile_app = FastAPI(title=f"AI Coding Proxy ({profile_name})")
     profile_app.on_event("startup")(_startup)
+
+    async def _profile_startup_message() -> None:
+        config = get_config()
+        profile = config.profiles.get(profile_name)
+        if profile is None:
+            return
+        print(
+            f"[startup] {profile_name} proxy is listening on http://0.0.0.0:{profile.port} "
+            f"(health: http://127.0.0.1:{profile.port}/health)",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    profile_app.on_event("startup")(_profile_startup_message)
     profile_app.on_event("shutdown")(_shutdown)
     profile_app.middleware("http")(auth_middleware)
 

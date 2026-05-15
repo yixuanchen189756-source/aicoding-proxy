@@ -1803,6 +1803,12 @@ async def _startup() -> None:
         f"startup: VLLM_BASE_URL={VLLM_BASE_URL.rstrip('/')} PROXY_PORT={PROXY_PORT} "
         f"CONNECT_TIMEOUT_S={CONNECT_TIMEOUT_S} STREAM_CHUNK_SIZE={STREAM_CHUNK_SIZE}"
     )
+    print(
+        f"[startup] openclaw proxy is listening on http://0.0.0.0:{PROXY_PORT} "
+        f"(health: http://127.0.0.1:{PROXY_PORT}/health, upstream: {VLLM_BASE_URL.rstrip('/')})",
+        file=sys.stderr,
+        flush=True,
+    )
     if TRACE_CONTENT:
         print(
             f"[trace] OPENAI_PROXY_TRACE=1 将打印 chat/completions 的请求/响应摘要到 stderr",
