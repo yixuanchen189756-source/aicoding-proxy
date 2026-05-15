@@ -60,8 +60,8 @@ if not defined CLAUDE_CODE_INSTANCE_ID (
 )
 if not defined CLAUDE_CODE_INSTANCE_ID set "CLAUDE_CODE_INSTANCE_ID=claude-code-default"
 
-if not defined ANTHROPIC_BASE_URL set "ANTHROPIC_BASE_URL=http://127.0.0.1:8906/v1"
-if not defined CLAUDE_CODE_SESSION_EVENT_URL set "CLAUDE_CODE_SESSION_EVENT_URL=http://127.0.0.1:8906/_agent/session-event"
+if not defined ANTHROPIC_BASE_URL set "ANTHROPIC_BASE_URL=http://100.64.0.132:8906/v1"
+if not defined CLAUDE_CODE_SESSION_EVENT_URL set "CLAUDE_CODE_SESSION_EVENT_URL=http://100.64.0.132:8906/_agent/session-event"
 
 set LF=^
 

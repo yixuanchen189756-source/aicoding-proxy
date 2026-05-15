@@ -22,6 +22,15 @@ The proxy joins those two streams using `X-Agent-Run-Id`.
 
 ```text
 config/claude-code/
+  scripts/
+    claude_code_rl.bat
+      Windows launcher. Generates the run/workspace metadata, sets Claude
+      Code's proxy environment variables and request headers, then starts
+      Claude Code.
+
+    claude_code_rl.sh
+      Linux/macOS launcher with the same behavior as the Windows launcher.
+
   hooks/
     claude_code_session_hook.bat
       Windows wrapper. Creates the log directory, records basic diagnostics,
@@ -31,6 +40,44 @@ config/claude-code/
       Reads the JSON hook payload from stdin and POSTs it to
       /_agent/session-event on the Claude Code proxy port.
 ```
+
+## Starting Claude Code
+
+Claude Code must be started from one of the wrapper scripts in `scripts/`.
+Do not start `claude`, `claude-js`, or another Claude Code binary directly when
+you want it to interact with this proxy.
+
+Windows:
+
+```bat
+config\claude-code\scripts\claude_code_rl.bat
+```
+
+Linux/macOS:
+
+```bash
+sh config/claude-code/scripts/claude_code_rl.sh
+```
+
+Both wrappers accept `--claude-bin` if the Claude Code executable has a custom
+name or path:
+
+```bash
+sh config/claude-code/scripts/claude_code_rl.sh --claude-bin claude -- --help
+```
+
+The wrapper is the component that creates `CLAUDE_CODE_RUN_ID`,
+`CLAUDE_CODE_WORKSPACE_ID`, `CLAUDE_CODE_WORKSPACE`, `CLAUDE_CODE_INSTANCE_ID`,
+`ANTHROPIC_BASE_URL`, `CLAUDE_CODE_SESSION_EVENT_URL`, and
+`ANTHROPIC_CUSTOM_HEADERS` before Claude Code starts. Claude Code then sends
+those headers on model requests, while the hook reports Claude Code's
+`session_id` on lifecycle events. The proxy joins the two streams with
+`X-Agent-Run-Id`.
+
+If Claude Code is launched directly, the hook may still receive a `session_id`,
+but model requests will not have the matching run header. In that state the
+proxy cannot reliably associate requests with the active Claude Code session,
+and trajectories can fall back to `__no_session_id__` or the wrong session.
 
 ## Proxy Endpoint
 
@@ -102,7 +149,7 @@ Comma-separated values can be sent by Claude Code as one malformed
 
 ## Environment Variables
 
-A launcher, shell profile, `.env` loader, or terminal script must set:
+The wrapper script must set:
 
 ```text
 ANTHROPIC_BASE_URL=http://<proxy-host>:8906/v1
@@ -113,6 +160,10 @@ CLAUDE_CODE_WORKSPACE=<workspace path>
 CLAUDE_CODE_INSTANCE_ID=<machine or instance id>
 CLAUDE_CODE_SESSION_EVENT_URL=http://<proxy-host>:8906/_agent/session-event
 ```
+
+You may predefine these variables before invoking the wrapper to override the
+generated values where the wrapper supports it, but the important requirement is
+that Claude Code inherits one consistent environment before it starts.
 
 Optional:
 
