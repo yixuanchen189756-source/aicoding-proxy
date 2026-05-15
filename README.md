@@ -82,7 +82,7 @@ There is intentionally no `client.py` entrypoint. Use the dedicated scripts abov
 Install Python dependencies:
 
 ```bash
-pip install fastapi uvicorn aiohttp pyyaml prometheus-client
+pip install -r requirements.txt
 ```
 
 ## Configuration

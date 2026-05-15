@@ -81,7 +81,7 @@ proxy/
 安装 Python 依赖：
 
 ```bash
-pip install fastapi uvicorn aiohttp pyyaml prometheus-client
+pip install -r requirements.txt
 ```
 
 ## 配置
