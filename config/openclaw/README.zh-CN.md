@@ -93,6 +93,42 @@ gateway_instances.json
 
 这些文件包含运行时注册信息，不应视为可移植源文件。
 
+### OpenClaw Client Gateway 要求
+
+OpenClaw client 必须暴露本地 gateway 的 chat-completions endpoint。否则
+`openclaw_proxy.py` 可以收到普通模型请求，但无法在 task 完成后把
+`/clear-memory` 请求发回 OpenClaw。
+
+在 OpenClaw state/config 文件中，通常是 `openclaw.json`，需要开启本地
+LAN gateway、token auth，以及 HTTP OpenAI chat-completions endpoint：
+
+```json
+{
+  "gateway": {
+    "mode": "local",
+    "bind": "lan",
+    "auth": {
+      "mode": "token",
+      "token": "<token>"
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": {
+          "enabled": true
+        }
+      }
+    },
+    "dangerouslyAllowHostHeaderOriginFallback": true,
+    "dangerouslyDisableDeviceAuth": true
+  }
+}
+```
+
+这里的 token 应该和 `rl-training-headers` extension 能从 OpenClaw state
+或 `OPENCLAW_GATEWAY_TOKEN` 读取到的 gateway token 一致。当代理通过主机
+LAN 或 tailnet 地址访问 OpenClaw，而不是通过 loopback 访问时，需要
+`bind: "lan"`。
+
 ### rl-training-headers Extension
 
 路径：

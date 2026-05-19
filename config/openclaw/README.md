@@ -102,6 +102,42 @@ gateway_instances.json
 Those files contain runtime registration information and should not be treated
 as portable source files.
 
+### OpenClaw Client Gateway Requirements
+
+The OpenClaw client must expose its local gateway chat-completions endpoint.
+Without this endpoint, `openclaw_proxy.py` can receive normal model requests but
+cannot send the task-completion `/clear-memory` request back into OpenClaw.
+
+In the OpenClaw state/config file, normally `openclaw.json`, enable the local
+LAN gateway, token auth, and the HTTP OpenAI chat-completions endpoint:
+
+```json
+{
+  "gateway": {
+    "mode": "local",
+    "bind": "lan",
+    "auth": {
+      "mode": "token",
+      "token": "<token>"
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": {
+          "enabled": true
+        }
+      }
+    },
+    "dangerouslyAllowHostHeaderOriginFallback": true,
+    "dangerouslyDisableDeviceAuth": true
+  }
+}
+```
+
+The token should be the same gateway token that the `rl-training-headers`
+extension can read from OpenClaw state or from `OPENCLAW_GATEWAY_TOKEN`. The
+`bind: "lan"` setting is needed when the proxy reaches OpenClaw through the
+host's LAN or tailnet address instead of loopback.
+
 ### rl-training-headers Extension
 
 Path:
