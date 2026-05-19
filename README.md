@@ -1,17 +1,17 @@
-# AI Coding Proxy
+﻿# AI Coding Proxy
 
-Language / 语言: English | [简体中文](README.zh-CN.md)
+Language / 璇█: English | [绠€浣撲腑鏂嘳(README.zh-CN.md)
 
-AI Coding Proxy is a small, file-oriented proxy package for collecting coding-agent trajectories while routing model requests to configured upstream LLM providers.
+AI Coding Proxy is a small, file-oriented proxy package for collecting coding-agent traces while routing model requests to configured upstream LLM providers.
 
 It is designed for four agent families:
 
-| Agent | Entrypoint | Port | Client protocol | Trajectory root |
+| Agent | Entrypoint | Port | Client protocol | Trace root |
 | --- | --- | ---: | --- | --- |
 | OpenCode | `opencode_proxy.py` | `8905` | OpenAI-compatible | `traces/opencode/<session_id>.json` |
 | Claude Code | `claude_code_proxy.py` | `8906` | Anthropic Messages | `traces/claude-code/<session_id>.json` |
 | Hermes | `hermes_proxy.py` | `8907` | OpenAI-compatible | `traces/hermes/<session_id>.json` |
-| OpenClaw | `openclaw_proxy.py` | `8908` | OpenAI-compatible gateway | `traces/openclaw/<session_id>.json` |
+| OpenClaw | `openclaw_proxy.py` | `8908` | OpenAI-compatible gateway | `traces/openclaw/<session_id>/task_<task_id>.json` |
 
 The proxy does not replace those agents. It sits between each agent and the upstream model provider so requests can be attributed to the right session, workspace, run, and agent.
 
@@ -21,7 +21,7 @@ Question:
   Why does this package exist?
 
 Model:
-  agent request + stable headers + proxy profile = replayable trajectory
+  agent request + stable headers + proxy profile = replayable trace
 
 Flow:
 
@@ -30,13 +30,13 @@ Coding agent
   -> agent-specific headers/hooks/plugins
   -> dedicated proxy port
   -> configured upstream backend
-  -> per-agent trajectory files
+  -> per-agent trace files
 ```
 
 Rule:
-  each agent owns its own process, port, request shape, and trajectory folder.
+  each agent owns its own process, port, request shape, and trace folder.
 
-This separation is intentional. OpenCode, Claude Code, Hermes, and OpenClaw expose different extension points, so the proxy keeps their integration logic separate while sharing backend configuration and trajectory conventions.
+This separation is intentional. OpenCode, Claude Code, Hermes, and OpenClaw expose different extension points, so the proxy keeps their integration logic separate while sharing backend configuration and trace conventions.
 
 ## Repository Layout
 
@@ -188,7 +188,7 @@ Point OpenCode's OpenAI-compatible provider at:
 http://<proxy-host>:8905/v1
 ```
 
-Guide: [config/opencode/README.md](config/opencode/README.md) | [中文](config/opencode/README.zh-CN.md)
+Guide: [config/opencode/README.md](config/opencode/README.md) | [涓枃](config/opencode/README.zh-CN.md)
 
 ### Claude Code
 
@@ -219,7 +219,7 @@ The hook endpoint is:
 http://<proxy-host>:8906/_agent/session-event
 ```
 
-Guide: [config/claude-code/README.md](config/claude-code/README.md) | [中文](config/claude-code/README.zh-CN.md)
+Guide: [config/claude-code/README.md](config/claude-code/README.md) | [涓枃](config/claude-code/README.zh-CN.md)
 
 ### Hermes
 
@@ -239,7 +239,7 @@ X-Turn-Type: main
 X-Agent-Workspace: <workspace-path>
 ```
 
-Guide: [config/hermes/README.md](config/hermes/README.md) | [中文](config/hermes/README.zh-CN.md)
+Guide: [config/hermes/README.md](config/hermes/README.md) | [涓枃](config/hermes/README.zh-CN.md)
 
 ### OpenClaw
 
@@ -259,24 +259,30 @@ X-Instance-Id
 
 It also registers the OpenClaw gateway URL/token with `openclaw_proxy.py`, which lets the proxy route requests for each instance.
 
-Guide: [config/openclaw/README.md](config/openclaw/README.md) | [中文](config/openclaw/README.zh-CN.md)
+Guide: [config/openclaw/README.md](config/openclaw/README.md) | [涓枃](config/openclaw/README.zh-CN.md)
 
-## Trajectories
+## Traces
 
-The proxy writes JSON trajectories directly under each agent's configured `session_dir`:
+The proxy writes JSON traces directly under each agent's configured `session_dir`:
 
 ```text
 traces/opencode/<session_id>.json
 traces/claude-code/<session_id>.json
 traces/hermes/<session_id>.json
-traces/openclaw/<session_id>.json
+traces/openclaw/<session_id>/task_<task_id>.json
 ```
 
 Claude Code still uses `run_id` and `workspace_id` internally to bind hook
-events to model requests, but the final trajectory file is keyed by
+events to model requests, but the final trace file is keyed by
 `session_id` like the other agents.
 
-Typical normalized trajectory shape:
+OpenClaw is task-oriented rather than session-file-oriented. The proxy keeps
+one folder per OpenClaw session and writes each detected task to
+`task_<task_id>.json`. When a task completes, the proxy tells the OpenClaw gateway to
+run `/clear-memory`, which resets the workspace memory files so the next task
+starts from a clean slate.
+
+Typical normalized trace shape:
 
 ```json
 {
@@ -302,7 +308,7 @@ Normalization rules:
 - Claude Code `<system-reminder>...</system-reminder>` blocks become chronological `system` messages.
 - Random tool call IDs are removed to reduce non-deterministic noise.
 
-Treat trajectory files as sensitive. They may contain prompts, code, tool output, paths, and system reminders.
+Treat trace files as sensitive. They may contain prompts, code, tool output, paths, and system reminders.
 
 ## Usage Accounting
 
