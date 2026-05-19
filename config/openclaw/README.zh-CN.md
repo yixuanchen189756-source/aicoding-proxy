@@ -47,7 +47,7 @@ http://0.0.0.0:8908
 如果需要不同端口，可以设置 `OPENAI_PROXY_PORT`：
 
 ```bash
-OPENAI_PROXY_PORT=8288 python openclaw_proxy.py
+OPENAI_PROXY_PORT=8908 python openclaw_proxy.py
 ```
 
 推荐的持久化配置是 `proxy/config.yaml` 顶层的 `openclaw` block：
@@ -79,7 +79,10 @@ OPENAI_PROXY_TRACE=1
   将请求/响应 trace 摘要打印到 stderr。
 
 OPENAI_PROXY_SESSION_FOLDER
-  per-session 轨迹文件目录。
+  per-session 轨迹文件夹的根目录。每个 session 会写成
+  <session_id>/task_<i>.json。如果没有设置这个环境变量，代理会使用
+  proxy/config.yaml 里的 openclaw.session_dir；如果 config.yaml 也没有配置，
+  就使用当前工作目录。
 ```
 
 OpenClaw 代理还会在脚本附近保存 gateway metadata：
@@ -187,12 +190,17 @@ cron
 
 标识 OpenClaw instance。当多个 OpenClaw instances 调用同一个代理时，这可以让代理区分 gateway registrations 和 trajectories。
 
-默认解析顺序：
+插件会从 OpenClaw gateway URL 的 origin 派生这个值：
 
-1. plugin config `instanceId`
-2. `OPENCLAW_INSTANCE_ID`
-3. `COMPUTERNAME`
-4. `openclaw-default`
+```text
+http://100.64.0.70:18789/v1/chat/completions -> 100.64.0.70_18789
+```
+
+手动配置的 `instanceId` 会被忽略，避免 `pc-m-main` 这类旧名字继续成为 registry key。
+
+### X-Agent-Workspace
+
+如果插件能解析 workspace 路径，就会把它放到这个 header 中。插件会优先使用 OpenClaw prompt context 里的 workspace 信息；如果没有，就使用当前进程工作目录。
 
 ## Extension 配置
 
@@ -203,8 +211,9 @@ cron
 | `sessionIdHeader` | `X-Session-Id` | session ID header 名称。 |
 | `turnTypeHeader` | `X-Turn-Type` | turn type header 名称。 |
 | `instanceIdHeader` | `X-Instance-Id` | instance ID header 名称。 |
-| `instanceId` | environment or machine name | 稳定的 OpenClaw instance ID。 |
-| `proxyRegisterUrl` | 必填 | `openclaw_proxy.py` 上的注册端点。 |
+| `workspaceHeader` | `X-Agent-Workspace` | workspace 路径 header 名称。 |
+| `instanceId` | ignored | 兼容旧配置，但插件会忽略这个值。 |
+| `proxyRegisterUrl` | ignored | 兼容旧配置，但插件会忽略这个值。 |
 | `gatewayUrl` | 必填 | OpenClaw gateway URL。 |
 | `gatewayToken` | read from OpenClaw state when possible | Gateway auth token。 |
 | `gatewayPort` | `18789` | 本地 OpenClaw gateway 端口。 |
@@ -215,24 +224,25 @@ cron
 ```text
 OPENCLAW_STATE_DIR
 OPENCLAW_GATEWAY_PORT
-OPENCLAW_PROXY_REGISTER_URL
 OPENCLAW_GATEWAY_URL
 OPENCLAW_GATEWAY_TOKEN
 OPENCLAW_INSTANCE_ID
 OPENCLAW_WORKSPACE_DIR
 ```
 
-注意：extension 默认 `proxyRegisterUrl` 是 `8288`，而当前 OpenClaw 代理默认端口是 `8908`。可以使用以下任一方式：
+OpenClaw 客户端侧只有一个代理地址来源：OpenClaw 自己配置里的当前默认 model provider `baseUrl`，例如：
 
 ```text
-Option A: run openclaw_proxy.py on 8288
-  OPENAI_PROXY_PORT=8288 python openclaw_proxy.py
-
-Option B: point the extension to 8908
-  OPENCLAW_PROXY_REGISTER_URL=http://<proxy-host>:8908/register-instance
+models.providers.vllm.baseUrl = http://100.64.0.132:8908/v1
 ```
 
-两个值必须匹配，否则 gateway registration 会失败。
+插件会从 OpenClaw state 读取默认 model provider，去掉末尾的 `/v1`，自动派生：
+
+```text
+http://100.64.0.132:8908/register-instance
+```
+
+不要再单独配置 `proxyRegisterUrl`；旧值会被忽略，避免 chat completions 和 registration 指向不同地址。
 
 extension 会尝试从这些位置读取 gateway token：
 
@@ -276,8 +286,18 @@ OpenClaw starts
   -> extension POSTs registration to openclaw_proxy.py
   -> proxy stores gateway_instances.json
   -> later LLM requests carry X-Instance-Id and X-Session-Id
+  -> each new session triggers one /clear-memory request to the gateway
   -> proxy can route/attribute requests for that instance
 ```
+
+轨迹文件会写入：
+
+```text
+<openclaw.session_dir>/<session_id>/task_1.json
+<openclaw.session_dir>/<session_id>/task_2.json
+```
+
+当前 `task_<i>.json` 会随着对话推进持续更新。当代理检测到一个 task 完成后，下一个面向用户的 task 会切换到下一个 task 文件。
 
 注册 payload 形状：
 
@@ -333,7 +353,7 @@ X-Instance-Id
 
 如果 registration 失败：
 
-- 检查 `proxyRegisterUrl`
+- 检查当前 OpenClaw model provider 的 `baseUrl`
 - 检查 `openclaw_proxy.py` 是否在运行
 - 检查 gateway token 是否存在于 OpenClaw state 中，或是否通过 `OPENCLAW_GATEWAY_TOKEN` 设置
 - 查看 `rl-training-headers.log`

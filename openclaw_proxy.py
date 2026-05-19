@@ -40,7 +40,7 @@ print(response.choices[0].message.content)
 - VLLM_BASE_URL: vLLM后端地址（必须显式配置，或由 config.yaml 的 openclaw.backend 指定）
 - OPENAI_PROXY_PORT: 本服务端口（默认 8081）
 - OPENAI_PROXY_TRACE=1: 将 /v1/chat/completions 的用户输入与上游响应摘要打印到 stderr
-- OPENAI_PROXY_SESSION_FOLDER: 轨迹存储文件夹，每个轨迹保存为 trajectory_{n}.json
+- OPENAI_PROXY_SESSION_FOLDER: trajectory root; files are saved as {session_id}/task_{i}.json
 ================================================================================
 """
 
@@ -75,10 +75,66 @@ import uvicorn
 # vLLM后端地址
 # 从环境变量读取，默认本地8078端口
 # rstrip("/") 去除末尾斜杠，urljoin会自动处理
+def _load_dotenv_file(path: Path) -> None:
+    """Load KEY=VALUE pairs from a local .env file without overriding env vars."""
+    if not path.exists():
+        return
+    loaded = 0
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+                loaded += 1
+    except Exception as exc:
+        print(f"[config-warning] could not read dotenv file {path}: {exc}", file=sys.stderr, flush=True)
+        return
+    if loaded:
+        print(f"[config] loaded {loaded} value(s) from {path}", file=sys.stderr, flush=True)
+
+
+def _load_dotenv_for_config(config_path: Path) -> None:
+    """Load dotenv values before expanding config.yaml placeholders."""
+    seen: set[Path] = set()
+    for candidate in [config_path.with_name(".env"), Path(__file__).with_name(".env")]:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        _load_dotenv_file(resolved)
+
+
+def _expand_env_value(value: Any) -> Any:
+    """Expand ${ENV_NAME} placeholders recursively in config values."""
+    if isinstance(value, str):
+        def repl(match: re.Match[str]) -> str:
+            name = match.group(1)
+            if name not in os.environ:
+                print(
+                    f"[config-warning] config placeholder ${{{name}}} expanded to an empty string",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return os.getenv(name, "")
+
+        return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", repl, value)
+    if isinstance(value, list):
+        return [_expand_env_value(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _expand_env_value(v) for k, v in value.items()}
+    return value
+
+
 def _read_config_file(path: Path) -> dict[str, Any]:
     """Read JSON/YAML config data from disk."""
     if not path.exists():
         return {}
+    _load_dotenv_for_config(path)
     text = path.read_text(encoding="utf-8")
     try:
         import yaml
@@ -89,7 +145,8 @@ def _read_config_file(path: Path) -> dict[str, Any]:
             data = json.loads(text)
         except Exception:
             data = {}
-    return data if isinstance(data, dict) else {}
+    data = data if isinstance(data, dict) else {}
+    return _expand_env_value(data)
 
 
 def _parse_simple_backend_settings(text: str, backend_name: str) -> dict[str, Optional[str]]:
@@ -171,11 +228,11 @@ def _parse_simple_backend_settings(text: str, backend_name: str) -> dict[str, Op
     )
     api_key = endpoint.get("api_key") or backend.get("api_key")
     model = endpoint.get("model")
-    return {
+    return _expand_env_value({
         "base_url": (str(base_url).rstrip("/") + "/") if base_url else None,
         "api_key": str(api_key).strip() if api_key else None,
         "model": str(model).strip() if model else None,
-    }
+    })
 
 
 def _profile_backend_name(data: dict[str, Any], profile_name: str) -> Optional[str]:
@@ -357,9 +414,9 @@ TRACE_CONTENT = os.getenv("OPENAI_PROXY_TRACE", "").strip().lower() in {
 SESSION_FOLDER = (
     os.getenv(
         "OPENAI_PROXY_SESSION_FOLDER",
-        str(_OPENCLAW_PROXY_SETTINGS.get("session_dir") or ""),
+        str(_OPENCLAW_PROXY_SETTINGS.get("session_dir") or os.getcwd()),
     ).strip()
-    or None
+    or os.getcwd()
 )
 
 # 轨迹文件计数器（在启动时初始化为现有 json 文件数量）
@@ -411,6 +468,39 @@ def _truncate(s: str, max_len: int = 4000) -> str:
     if len(s) <= max_len:
         return s
     return s[:max_len] + f"…(truncated, len={len(s)})"
+
+
+def _safe_filename(value: str) -> str:
+    """Make an id safe for use as a single filename segment."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value).strip())
+    cleaned = cleaned.strip("._")
+    return cleaned or "__empty__"
+
+
+def _normalize_openclaw_session_id(session_id: str) -> str:
+    value = str(session_id or "").strip()
+    prefix = "your-fixed-user-name_"
+    if value.startswith(prefix):
+        return value[len(prefix):] or value
+    return value
+
+
+def _is_clear_memory_request_body(body: bytes) -> bool:
+    obj = _try_parse_json(body)
+    if not isinstance(obj, dict):
+        return False
+    messages = obj.get("messages")
+    if not isinstance(messages, list):
+        return False
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        if message.get("role") != "user":
+            continue
+        content = _extract_text_from_content(message.get("content")).strip()
+        if content == "/clear-memory":
+            return True
+    return False
 
 
 def _summarize_messages_for_trace(obj: dict[str, Any]) -> Any:
@@ -568,7 +658,7 @@ def _get_x_session_id(request: Request) -> str:
     for k, v in request.headers.items():
         if k.lower() == "x-session-id":
             s = (v or "").strip()
-            return s if s else "__empty_x_session_id__"
+            return _normalize_openclaw_session_id(s) if s else "__empty_x_session_id__"
     return "__no_x_session_id__"
 
 
@@ -1167,6 +1257,8 @@ def _make_state_key(instance_id: Optional[str], session_id: str) -> str:
 # Task tracking: session_id -> message count when task started
 # OpenClaw sends full session history each time, so we just need to know where current task started
 _task_start_index: dict[str, int] = {}
+_task_file_index: dict[str, int] = {}
+_new_session_clear_memory_sent: set[str] = set()
 
 
 # ================================================================================
@@ -1333,17 +1425,13 @@ def _resolve_gateway_for_request(
         token = entry.get("gateway_token")
         return resolved_url, token, iid
 
-    if port and not url:
-        gateway_base_url = os.getenv("OPENCLAW_GATEWAY_BASE_URL", "http://10.31.6.14").rstrip("/")
-        url = f"{gateway_base_url}:{port}/v1/chat/completions"
-
     token = _get_gateway_token_by_port(port)
     return url, token, iid
 
 
 async def _persist_session_json() -> None:
     """
-    将轨迹保存到 SESSION_FOLDER/trajectory_{instance_id}_{counter}.json
+    将轨迹保存到 SESSION_FOLDER/{session_id}/task_{i}.json
     同时清理已保存实例的 _task_start_index 条目，避免内存泄漏。
     """
     global _trajectory_counter
@@ -1363,15 +1451,17 @@ async def _persist_session_json() -> None:
 
     # 为每个 session 生成一个独立的轨迹文件
     for state_key, trajectory in trajectories.items():
-        _trajectory_counter += 1
+        session_id = str(trajectory.get("session_id") or state_key or "__no_session_id__")
+        task_index = int(trajectory.get("task_index") or 1)
 
-        # 从轨迹中获取 instance_id
-        instance_id = trajectory.get("instance_id") or "default"
-        filename = f"trajectory_{instance_id}_{_trajectory_counter}.json"
-        filepath = Path(SESSION_FOLDER) / filename
+        # 从轨迹中获取 session_id / task_index
+        session_dir = Path(SESSION_FOLDER) / _safe_filename(session_id)
+        filepath = session_dir / f"task_{task_index}.json"
+        filename = str(filepath)
         tmp = filepath.with_suffix(filepath.suffix + ".tmp")
 
         def _write() -> None:
+            filepath.parent.mkdir(parents=True, exist_ok=True)
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(trajectory, f, ensure_ascii=False, indent=2)
             tmp.replace(filepath)
@@ -1461,6 +1551,8 @@ def _extract_messages_for_task(
     for msg in all_messages[start_index:]:
         if isinstance(msg, dict):
             cleaned = _clean_message_content(msg)
+            if cleaned.get("role") == "user" and not str(cleaned.get("content") or "").strip():
+                continue
             messages.append(cleaned)
 
     # 追加本轮 assistant 响应
@@ -1673,9 +1765,11 @@ async def _accumulate_session_trace(
         # 新会话：没有旧消息需要跳过，从 0 开始
         # （同会话的后续任务：key 已存在，使用任务完成时更新的值）
         _task_start_index[state_key] = 0
+        _task_file_index[state_key] = 1
         print(f"[accumulate][{session_id}] 新会话，起始索引: 0", file=sys.stderr, flush=True)
 
     start_index = _task_start_index[state_key]
+    task_index = _task_file_index.get(state_key, 1)
     print(f"[accumulate][{session_id}] 当前任务起始索引: {start_index}, 请求消息总数: {len(req_messages) if isinstance(req_messages, list) else 0}", file=sys.stderr, flush=True)
 
     # ✅ 提取当前任务的消息（从 start_index 开始）+ 本轮 assistant 响应
@@ -1697,6 +1791,21 @@ async def _accumulate_session_trace(
     if finish_reason is None:
         print(f"[accumulate][{session_id}] ⚠️ finish_reason=None（可能是提取失败），继续检测", file=sys.stderr, flush=True)
 
+    # Always persist the latest user-visible turn snapshot. Task completion only
+    # controls task-boundary advancement and OpenClaw cleanup notification.
+    t_snapshot = time.perf_counter()
+    async with _trajectories_lock:
+        _trajectories[state_key] = {
+            "session_id": session_id,
+            "instance_id": instance_id,
+            "task_index": task_index,
+            "messages": messages,
+            "tools": tools,
+        }
+        _enqueue_persist()
+    snapshot_elapsed = (time.perf_counter() - t_snapshot) * 1000
+    print(f"[accumulate][{session_id}] 已保存当前轨迹快照 task_{task_index}.json，保存耗时={snapshot_elapsed:.2f}ms", file=sys.stderr, flush=True)
+
     # ✅ 检测任务完成（TodoWrite 检查 + LLM 判断）
     t4 = time.perf_counter()
     task_completed, reason = _detect_task_completion(messages, response_summary)
@@ -1712,23 +1821,17 @@ async def _accumulate_session_trace(
         print(f"[accumulate][{session_id}] LLM 判定结果: {task_completed}, LLM 耗时={llm_elapsed:.2f}ms", file=sys.stderr, flush=True)
 
     if task_completed:
-        # ✅ 任务完成，保存轨迹
+        # ✅ 任务完成，更新任务边界
         t6 = time.perf_counter()
         async with _trajectories_lock:
-            _trajectories[state_key] = {
-                "session_id": session_id,
-                "instance_id": instance_id,
-                "messages": messages,
-                "tools": tools,
-            }
             # ✅ 更新任务起始索引
             # req_messages 是请求带来的消息，本轮还追加了1条 assistant 响应
             # 下一个任务应从 assistant 响应之后开始，所以 +1
             new_start = (len(req_messages) + 1) if isinstance(req_messages, list) else 1
             _task_start_index[state_key] = new_start
-            _enqueue_persist()
+            _task_file_index[state_key] = task_index + 1
         save_elapsed = (time.perf_counter() - t6) * 1000
-        print(f"[accumulate][{session_id}] 已保存轨迹，更新起始索引到: {new_start}, 保存耗时={save_elapsed:.2f}ms", file=sys.stderr, flush=True)
+        print(f"[accumulate][{session_id}] 任务完成，更新起始索引到: {new_start}, 下一轨迹=task_{task_index + 1}.json, 耗时={save_elapsed:.2f}ms", file=sys.stderr, flush=True)
 
         # 发送通知
         print(f"[accumulate][{session_id}] 准备调用 _notify_gateway_task_done, gateway_url={gateway_url}, instance_id={instance_id}", file=sys.stderr, flush=True)
@@ -2053,6 +2156,29 @@ async def proxy_v1(path: str, request: Request) -> Response:
     # 调试：打印当前注册的 Token
     print(f"[debug] 当前已注册端口: {list(_gateway_tokens.keys())}", file=sys.stderr, flush=True)
 
+    state_key = _make_state_key(resolved_instance_id or instance_id, session_id)
+    is_clear_memory_request = _is_clear_memory_request_body(body)
+    if trace_chat and is_clear_memory_request:
+        print(f"[clear-memory][{session_id}] internal /clear-memory request detected; forwarding upstream without session-start trigger", file=sys.stderr, flush=True)
+
+    has_real_session_id = session_id and session_id != "__no_x_session_id__"
+    if (
+        trace_chat
+        and has_real_session_id
+        and not is_clear_memory_request
+        and state_key not in _new_session_clear_memory_sent
+    ):
+        _new_session_clear_memory_sent.add(state_key)
+        print(f"[session-start][{session_id}] 新 session，触发 /clear-memory, state_key={state_key}", file=sys.stderr, flush=True)
+        asyncio.create_task(
+            _notify_gateway_task_done(
+                session_id,
+                gateway_url,
+                gateway_token,
+                resolved_instance_id or instance_id,
+                max_retries=1,
+            )
+        )
     request_trace: Optional[dict[str, Any]] = None
     if trace_chat and (TRACE_CONTENT or SESSION_FOLDER):
         request_trace = _build_chat_request_trace(body)

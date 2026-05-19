@@ -8,10 +8,10 @@ AI Coding Proxy 是一个小而直接、以文件为中心的代理包，用于�
 
 | Agent | 启动入口 | 端口 | 客户端协议 | 轨迹根目录 |
 | --- | --- | ---: | --- | --- |
-| OpenCode | `opencode_proxy.py` | `8905` | OpenAI-compatible | `traces/opencode` |
-| Claude Code | `claude_code_proxy.py` | `8906` | Anthropic Messages | `traces/claude-code` |
-| Hermes | `hermes_proxy.py` | `8907` | OpenAI-compatible | `traces/hermes` |
-| OpenClaw | `openclaw_proxy.py` | `8908` | OpenAI-compatible gateway | `traces/openclaw` |
+| OpenCode | `opencode_proxy.py` | `8905` | OpenAI-compatible | `traces/opencode/<session_id>.json` |
+| Claude Code | `claude_code_proxy.py` | `8906` | Anthropic Messages | `traces/claude-code/<session_id>.json` |
+| Hermes | `hermes_proxy.py` | `8907` | OpenAI-compatible | `traces/hermes/<session_id>.json` |
+| OpenClaw | `openclaw_proxy.py` | `8908` | OpenAI-compatible gateway | `traces/openclaw/<session_id>.json` |
 
 这个代理不替代这些 agent。它位于 agent 和上游模型服务之间，让每个请求都能归属到正确的 session、workspace、run 和 agent。
 
@@ -75,7 +75,7 @@ proxy/
 - 各 agent 的 header 注入机制：
   - OpenCode：plugin hook
   - Claude Code：wrapper 环境变量 + session hook
-  - Hermes：请求级 `extra_headers` patch
+  - Hermes：model-provider plugin
   - OpenClaw：extension + gateway registration
 
 安装 Python 依赖：
@@ -177,7 +177,7 @@ curl http://<proxy-host>:8908/health
 OpenCode 使用 `config/opencode/rl-training-headers`，它会注入：
 
 ```text
-X-Session-Id: <userName>_<sessionID>
+X-Session-Id: <sessionID>
 X-Turn-Type: main|side
 ```
 
@@ -222,17 +222,20 @@ http://<proxy-host>:8906/_agent/session-event
 
 ### Hermes
 
-Hermes 应把 OpenAI-compatible 请求发送到：
+Hermes 应使用 `config/hermes/model-providers/aicoding-proxy-hermes` 里的 model-provider plugin。
+
+这个 provider 会把 OpenAI-compatible 请求发送到：
 
 ```text
 http://<proxy-host>:8907/v1
 ```
 
-Hermes 必须添加请求级 `extra_headers`：
+它会添加请求级 `extra_headers`：
 
 ```text
-X-Session-Id: <user_name>_<session_id>
-X-Turn-Type: main|side
+X-Session-Id: <session_id>
+X-Turn-Type: main
+X-Agent-Workspace: <workspace-path>
 ```
 
 指南：[config/hermes/README.md](config/hermes/README.md) | [中文](config/hermes/README.zh-CN.md)
@@ -264,9 +267,10 @@ X-Instance-Id
 Claude Code 使用 workspace/session 目录结构：
 
 ```text
-traces/claude-code/<workspace_id>/<session_id>/trajectory.json
-traces/claude-code/<workspace_id>/<session_id>/metadata.json
-traces/claude-code/<workspace_id>/runs/<run_id>.json
+traces/opencode/<session_id>.json
+traces/claude-code/<session_id>.json
+traces/hermes/<session_id>.json
+traces/openclaw/<session_id>.json
 ```
 
 典型的归一化轨迹结构：

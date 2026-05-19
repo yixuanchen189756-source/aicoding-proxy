@@ -52,7 +52,7 @@ http://0.0.0.0:8908
 Set `OPENAI_PROXY_PORT` if you want a different port:
 
 ```bash
-OPENAI_PROXY_PORT=8288 python openclaw_proxy.py
+OPENAI_PROXY_PORT=8908 python openclaw_proxy.py
 ```
 
 The preferred persistent configuration is the top-level `openclaw` block in
@@ -86,7 +86,10 @@ OPENAI_PROXY_TRACE=1
   Print request/response trace summaries to stderr.
 
 OPENAI_PROXY_SESSION_FOLDER
-  Directory for per-session trajectory files.
+  Root directory for per-session trajectory folders. Each session is written as
+  <session_id>/task_<i>.json. If this is unset, the proxy uses openclaw.session_dir
+  from proxy/config.yaml; if that is also unset, it uses the current working
+  directory.
 ```
 
 The OpenClaw proxy also persists gateway metadata near the script:
@@ -202,12 +205,20 @@ Everything else is `main`.
 Identifies the OpenClaw instance. This lets the proxy keep gateway registrations
 and trajectories separate when multiple OpenClaw instances call the same proxy.
 
-Default resolution order:
+The plugin derives this from the OpenClaw gateway URL origin:
 
-1. plugin config `instanceId`
-2. `OPENCLAW_INSTANCE_ID`
-3. `COMPUTERNAME`
-4. `openclaw-default`
+```text
+http://100.64.0.70:18789/v1/chat/completions -> 100.64.0.70_18789
+```
+
+Manual `instanceId` values are ignored so stale names such as `pc-m-main` do not
+become registry keys.
+
+### X-Agent-Workspace
+
+Contains the workspace path when the plugin can resolve it. The plugin first
+uses workspace data from the OpenClaw prompt context when available, then falls
+back to the current process working directory.
 
 ## Extension Configuration
 
@@ -218,8 +229,9 @@ Default resolution order:
 | `sessionIdHeader` | `X-Session-Id` | Header name for session ID. |
 | `turnTypeHeader` | `X-Turn-Type` | Header name for turn type. |
 | `instanceIdHeader` | `X-Instance-Id` | Header name for instance ID. |
-| `instanceId` | environment or machine name | Stable OpenClaw instance ID. |
-| `proxyRegisterUrl` | Required | Registration endpoint on `openclaw_proxy.py`. |
+| `workspaceHeader` | `X-Agent-Workspace` | Header name for the workspace path. |
+| `instanceId` | ignored | Legacy option accepted by the schema but ignored by the plugin. |
+| `proxyRegisterUrl` | ignored | Legacy option accepted by the schema but ignored by the plugin. |
 | `gatewayUrl` | Required | OpenClaw gateway URL. |
 | `gatewayToken` | read from OpenClaw state when possible | Gateway auth token. |
 | `gatewayPort` | `18789` | Local OpenClaw gateway port. |
@@ -230,25 +242,28 @@ Environment variable fallbacks:
 ```text
 OPENCLAW_STATE_DIR
 OPENCLAW_GATEWAY_PORT
-OPENCLAW_PROXY_REGISTER_URL
 OPENCLAW_GATEWAY_URL
 OPENCLAW_GATEWAY_TOKEN
 OPENCLAW_INSTANCE_ID
 OPENCLAW_WORKSPACE_DIR
 ```
 
-Important: the extension default `proxyRegisterUrl` is `8288`, while the current
-OpenClaw proxy default port is `8908`. Use one of these approaches:
+The OpenClaw client has one source of truth for the proxy address: the active
+model provider `baseUrl` in OpenClaw's own config, for example:
 
 ```text
-Option A: run openclaw_proxy.py on 8288
-  OPENAI_PROXY_PORT=8288 python openclaw_proxy.py
-
-Option B: point the extension to 8908
-  OPENCLAW_PROXY_REGISTER_URL=http://<proxy-host>:8908/register-instance
+models.providers.vllm.baseUrl = http://100.64.0.132:8908/v1
 ```
 
-The two values must match or gateway registration will fail.
+The plugin reads the default model provider from OpenClaw state, removes the
+trailing `/v1`, and derives:
+
+```text
+http://100.64.0.132:8908/register-instance
+```
+
+Do not configure a separate `proxyRegisterUrl`; stale values are ignored to
+avoid drift between chat completions and registration.
 
 The extension tries to read the gateway token from:
 
@@ -293,8 +308,20 @@ OpenClaw starts
   -> extension POSTs registration to openclaw_proxy.py
   -> proxy stores gateway_instances.json
   -> later LLM requests carry X-Instance-Id and X-Session-Id
+  -> each new session triggers one /clear-memory request to the gateway
   -> proxy can route/attribute requests for that instance
 ```
+
+Trajectory files are stored under:
+
+```text
+<openclaw.session_dir>/<session_id>/task_1.json
+<openclaw.session_dir>/<session_id>/task_2.json
+```
+
+The current `task_<i>.json` file is updated as the turn evolves. When the proxy
+detects that a task is complete, the next user-facing task advances to the next
+task file.
 
 Registration payload shape:
 
@@ -350,7 +377,7 @@ X-Instance-Id
 
 If registration fails:
 
-- verify `proxyRegisterUrl`
+- verify the active OpenClaw model provider `baseUrl`
 - verify `openclaw_proxy.py` is running
 - verify the gateway token exists in OpenClaw state or is set through
   `OPENCLAW_GATEWAY_TOKEN`

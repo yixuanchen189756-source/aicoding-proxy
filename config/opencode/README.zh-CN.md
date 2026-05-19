@@ -55,7 +55,7 @@ profiles:
 请求轨迹会写入：
 
 ```text
-traces/opencode/
+traces/opencode/<session_id>.json
 ```
 
 ## 插件目的
@@ -63,8 +63,9 @@ traces/opencode/
 `rl-training-headers` 会注入：
 
 ```text
-X-Session-Id: <userName>_<sessionID>
+X-Session-Id: <sessionID>
 X-Turn-Type: main|side
+X-Agent-Workspace: <workspace-path>
 ```
 
 这些 header 让代理能够把每个请求绑定到稳定 session，并把后台 turn 和面向用户的 turn 分开标记。
@@ -76,12 +77,13 @@ OpenCode 插件使用：
 ```js
 "chat.headers": async (input, output) => {
   const sessionId = input.sessionID ?? "";
-  const combinedSessionId = `${userName}_${sessionId}`;
   const turnType = SIDE_TRIGGERS.has(input.agent ?? "") ? "side" : "main";
 
   output.headers = {
-    [sessionIdHeader]: combinedSessionId,
+    [sessionIdHeader]: sessionId,
+    "X-Agent-Session-Id": sessionId,
     [turnTypeHeader]: turnType,
+    [workspaceHeader]: workspace,
   };
 }
 ```
@@ -102,11 +104,11 @@ cron
 
 ## 插件配置
 
-最小 OpenCode 配置：
+推荐的本地 OpenCode 配置：
 
 ```json
 {
-  "plugin": ["rl-training-headers"]
+  "plugin": ["./plugins/index.js"]
 }
 ```
 
@@ -115,10 +117,10 @@ cron
 ```json
 {
   "plugin": [
-    ["rl-training-headers", {
-      "userName": "my-team",
+    ["./plugins/index.js", {
       "sessionIdHeader": "X-Session-Id",
-      "turnTypeHeader": "X-Turn-Type"
+      "turnTypeHeader": "X-Turn-Type",
+      "workspace": "<workspace-path>"
     }]
   ]
 }
@@ -128,37 +130,44 @@ cron
 
 | 配置项 | 默认值 | 说明 |
 | --- | --- | --- |
-| `userName` | `default-user` | 加在 OpenCode session ID 前面的前缀。 |
-| `sessionIdHeader` | `X-Session-Id` | 组合 session ID 的 header 名称。 |
+| `sessionIdHeader` | `X-Session-Id` | OpenCode session ID 的 header 名称。 |
 | `turnTypeHeader` | `X-Turn-Type` | main/side 分类的 header 名称。 |
+| `workspace` | `process.cwd()` | 每次请求携带的 workspace 路径。 |
+| `workspaceHeader` | `X-Agent-Workspace` | workspace 路径使用的 header 名称。 |
+| `debug` | `false` | 为 `true` 时写入插件生命周期和 hook 诊断日志。 |
+| `debugFile` | 未设置 | debug 日志文件路径，例如 `~/.config/opencode/rl-training-headers-debug.log`。 |
 
 ## 安装插件
 
-本地开发时，请按你的 OpenCode 安装方式安装或链接插件目录。包名是：
+OpenCode 可以稳定加载配置目录 `plugins/` 下的本地插件文件。把运行入口复制到该目录：
 
-```text
-rl-training-headers
+```bash
+mkdir -p ~/.config/opencode/plugins
+cp config/opencode/rl-training-headers/index.js ~/.config/opencode/plugins/index.js
 ```
 
-包入口是 `index.js`，`package.json` 声明：
+Windows 上对应的位置是：
+
+```text
+C:\Users\<you>\.config\opencode\plugins\index.js
+```
+
+然后在 `opencode.json` 中引用这个文件：
 
 ```json
 {
-  "type": "module",
-  "main": "index.js",
-  "exports": {
-    ".": "./index.js"
-  }
+  "plugin": [
+    "./plugins/index.js"
+  ]
 }
 ```
 
-OpenCode 通常会把插件缓存到：
+这个插件仍然保留了 `package.json`，在安装到 Node 可解析路径后也可以作为
+`rl-training-headers` 导入。但对本项目而言，推荐使用 `plugins/` 下的本地文件；
+这样不依赖 OpenCode 的 package cache 目录结构，不同机器上更稳。
 
-```text
-~/.cache/opencode/packages/
-```
-
-如果使用本地包，请确认缓存包或 symlink 指向本目录下的 `rl-training-headers`。
+如果修改了 `config/opencode/rl-training-headers/index.js`，重新测试前需要再次复制到
+`~/.config/opencode/plugins/index.js`。
 
 ## OpenCode Provider 配置
 
@@ -178,9 +187,7 @@ OpenCode 通常会把插件缓存到：
     }
   },
   "plugin": [
-    ["rl-training-headers", {
-      "userName": "default-user"
-    }]
+    "./plugins/index.js"
   ]
 }
 ```
@@ -188,10 +195,14 @@ OpenCode 通常会把插件缓存到：
 不同版本的 OpenCode 配置结构可能不同，但不变的是：
 
 - base URL 指向 `http://<proxy-host>:8905/v1`
-- 已加载 `rl-training-headers` 插件
-- OpenCode 请求携带 `X-Session-Id`
+- 已加载 `./plugins/index.js` 插件
+- OpenCode 请求携带 `X-Session-Id` 或 `X-Agent-Session-Id`
+- 如果需要 workspace 元数据，OpenCode 请求携带 `X-Agent-Workspace`
 
 如果代理关闭认证，API key 可以是任意非空值。如果开启认证，它必须匹配 `config.yaml` 中的 `auth.keys`。
+
+只有 Claude Code 使用 `run_id` 和 `workspace_id`。OpenCode 不需要这两个字段；
+它只需要在必要时通过 `X-Agent-Workspace` 发送普通 workspace 路径。
 
 ## 验证
 
@@ -204,14 +215,14 @@ opencode debug config --print-logs --log-level DEBUG
 预期日志片段：
 
 ```text
-service=plugin path=rl-training-headers loading plugin
-[rl-training-headers] activated (chat.headers hook, user: default-user)
+service=plugin path=./plugins/index.js loading plugin
+[rl-training-headers] activated (chat.headers hook)
 ```
 
-直接检查模块：
+直接检查插件文件：
 
 ```bash
-node -e "import('rl-training-headers').then(m => console.log(m.default.id))"
+node -e "import('./plugins/index.js').then(m => console.log(m.default.id))"
 ```
 
 预期输出：
@@ -223,9 +234,9 @@ rl-training-headers
 手动检查 hook 行为：
 
 ```js
-import pluginModule from "rl-training-headers";
+import pluginModule from "./plugins/index.js";
 
-const hooks = await pluginModule.server({}, { userName: "test" });
+const hooks = await pluginModule.server({}, { workspace: "/path/to/workspace" });
 const output = { headers: {} };
 
 await hooks["chat.headers"](
@@ -246,8 +257,10 @@ console.log(output.headers);
 
 ```json
 {
-  "X-Session-Id": "test_s1",
-  "X-Turn-Type": "main"
+  "X-Session-Id": "s1",
+  "X-Agent-Session-Id": "s1",
+  "X-Turn-Type": "main",
+  "X-Agent-Workspace": "/path/to/workspace"
 }
 ```
 
@@ -267,7 +280,7 @@ OpenCode 原生 `chat.headers` hook 更适合这个场景：
 如果轨迹写到了 `__no_session_id__`：
 
 - 确认插件已加载
-- 确认请求里有 `X-Session-Id`
+- 确认请求里有 `X-Session-Id` 或 `X-Agent-Session-Id`
 - 确认 OpenCode 使用的是代理 base URL
 - 确认请求打到 `8905`，而不是其他 profile 端口
 

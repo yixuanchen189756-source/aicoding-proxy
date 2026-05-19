@@ -640,26 +640,16 @@ def _safe_filename(value: str) -> str:
     return cleaned or "__empty__"
 
 
-def _get_trace_path(profile: ProfileConfig, session_id: str, now_ts: Optional[float] = None) -> Path:
-    """Return the trace JSON path for a profile/session."""
-    base = Path(profile.session_dir or "traces/default")
-    dt = datetime.fromtimestamp(now_ts if now_ts is not None else time.time())
-    return base / dt.strftime("%Y-%m-%d") / f"{_safe_filename(session_id)}.json"
-
-
 def _get_profile_trace_path(
     profile_name: str,
     profile: ProfileConfig,
     session_context: dict[str, Any],
     now_ts: Optional[float] = None,
 ) -> Path:
-    """Return the trace path for a profile/session context."""
+    """Return the trace path under the profile's configured session_dir."""
     session_id = str(session_context.get("session_id") or "__no_session_id__")
-    if profile_name == "claude-code":
-        workspace_id = str(session_context.get("workspace_id") or "__unknown_workspace__")
-        base = Path(profile.session_dir or "traces/claude-code")
-        return base / _safe_filename(workspace_id) / _safe_filename(session_id) / "trajectory.json"
-    return _get_trace_path(profile, session_id, now_ts=now_ts)
+    base = Path(profile.session_dir or "traces")
+    return base / f"{_safe_filename(session_id)}.json"
 
 
 def _profile_trace_enabled(profile: ProfileConfig, config: Config) -> bool:
@@ -1857,7 +1847,10 @@ async def _persist_agent_session_metadata(entry: dict[str, Any]) -> None:
     workspace_id = _safe_filename(str(entry.get("workspace_id") or "__unknown_workspace__"))
     run_id = _safe_filename(str(entry.get("run_id") or "__unknown_run__"))
     session_id = str(entry.get("active_session_id") or "")
-    base = Path("traces/claude-code") / workspace_id
+    config = get_config()
+    profile = config.profiles.get("claude-code")
+    trace_root = Path(profile.session_dir if profile and profile.session_dir else "traces")
+    base = trace_root / "claude-code" / "_metadata" / workspace_id
     run_path = base / "runs" / f"{run_id}.json"
 
     def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -1869,7 +1862,7 @@ async def _persist_agent_session_metadata(entry: dict[str, Any]) -> None:
 
     await asyncio.to_thread(_write_json, run_path, entry)
     if session_id:
-        session_path = base / _safe_filename(session_id) / "metadata.json"
+        session_path = base / "sessions" / f"{_safe_filename(session_id)}.json"
         await asyncio.to_thread(_write_json, session_path, entry)
 
 
@@ -1931,18 +1924,24 @@ async def _resolve_session_context(profile_name: str, request: Request) -> dict[
         or headers.get("x-session-id")
         or ""
     ).strip()
-    run_id = (headers.get("x-agent-run-id") or "").strip()
-    workspace_id = (headers.get("x-agent-workspace-id") or "").strip() or "__unknown_workspace__"
     workspace = (headers.get("x-agent-workspace") or "").strip() or None
+    run_id = (headers.get("x-agent-run-id") or "").strip() if profile_name == "claude-code" else ""
+    workspace_id = (
+        (headers.get("x-agent-workspace-id") or "").strip() or "__unknown_workspace__"
+        if profile_name == "claude-code"
+        else None
+    )
 
     if explicit_session:
-        return {
+        ctx = {
             "session_id": explicit_session,
-            "run_id": run_id,
-            "workspace_id": workspace_id,
             "workspace": workspace,
             "source": "header",
         }
+        if profile_name == "claude-code":
+            ctx["run_id"] = run_id
+            ctx["workspace_id"] = workspace_id
+        return ctx
 
     if profile_name == "claude-code" and run_id:
         registered = await _lookup_agent_session(run_id)
@@ -1957,10 +1956,13 @@ async def _resolve_session_context(profile_name: str, request: Request) -> dict[
 
     return {
         "session_id": "__no_session_id__",
-        "run_id": run_id or None,
-        "workspace_id": workspace_id,
         "workspace": workspace,
         "source": "fallback",
+        **(
+            {"run_id": run_id or None, "workspace_id": workspace_id}
+            if profile_name == "claude-code"
+            else {}
+        ),
     }
 
 
@@ -2078,20 +2080,33 @@ def _is_title_generation_request(request_summary: dict[str, Any]) -> bool:
     if not isinstance(messages, list):
         return False
 
+    has_opencode_title_system = False
+    has_opencode_title_user = False
     for message in messages:
-        if not isinstance(message, dict) or message.get("role") != "system":
+        if not isinstance(message, dict):
             continue
         content = message.get("content")
         if not isinstance(content, str):
             continue
         normalized = content.lower()
-        if (
+        if message.get("role") == "system" and (
             "generate a concise" in normalized
             and "title" in normalized
             and "return json" in normalized
             and '"title"' in normalized
         ):
             return True
+        if message.get("role") == "system" and (
+            "you are a title generator" in normalized
+            and "generate a brief title" in normalized
+            and "never use tools" in normalized
+            and "never respond to questions, just generate a title" in normalized
+        ):
+            has_opencode_title_system = True
+        if message.get("role") == "user" and "generate a title for this conversation" in normalized:
+            has_opencode_title_user = True
+    if has_opencode_title_system and has_opencode_title_user:
+        return True
     return False
 
 
@@ -2200,6 +2215,27 @@ def _assistant_response_excerpt(response_summary: dict[str, Any]) -> str:
     return _truncate(str(text).replace("\n", "\\n"), 500)
 
 
+def _agent_header_snapshot(headers: Any) -> dict[str, str]:
+    wanted = {
+        "x-agent-session-id",
+        "x-session-id",
+        "x-turn-type",
+        "x-agent-name",
+        "x-agent-workspace",
+        "user-agent",
+    }
+    out: dict[str, str] = {}
+    try:
+        items = headers.items()
+    except Exception:
+        return out
+    for key, value in items:
+        lowered = str(key).lower()
+        if lowered in wanted:
+            out[lowered] = _truncate(str(value), 500)
+    return out
+
+
 def _request_trace_with_merged_assistant(
     request_summary: dict[str, Any],
     response_summary: dict[str, Any],
@@ -2251,11 +2287,10 @@ async def _overwrite_session_trace(
     topic_response = _is_new_topic_detection_response(response_summary)
     summary_request = _is_conversation_summary_request(request_summary)
     if title_request or title_response or topic_request or topic_response or summary_request:
-        _trace_log("trace_skip_internal_request", {
+        skip_log = {
             "profile": profile_name,
             "session_id": session_id,
-            "run_id": session_context.get("run_id"),
-            "workspace_id": session_context.get("workspace_id"),
+            "workspace": session_context.get("workspace"),
             "reason": {
                 "title_request": title_request,
                 "title_response": title_response,
@@ -2266,36 +2301,47 @@ async def _overwrite_session_trace(
             "request_message_roles": _trace_message_roles(request_summary.get("messages")),
             "first_system_excerpt": _first_system_excerpt(request_summary.get("messages")),
             "assistant_response_excerpt": _assistant_response_excerpt(response_summary),
-        })
+        }
+        if profile_name == "claude-code":
+            skip_log["run_id"] = session_context.get("run_id")
+            skip_log["workspace_id"] = session_context.get("workspace_id")
+        _trace_log("trace_skip_internal_request", skip_log)
         return
     merged = _request_trace_with_merged_assistant(request_summary, response_summary)
     raw_msgs = merged.get("messages")
     if not isinstance(raw_msgs, list):
         raw_msgs = []
     msgs = _strip_ids_from_tool_calls(_normalize_trace_messages(raw_msgs))
-    _trace_log("trace_write_snapshot", {
+    write_log = {
         "profile": profile_name,
         "session_id": session_id,
-        "run_id": session_context.get("run_id"),
-        "workspace_id": session_context.get("workspace_id"),
+        "workspace": session_context.get("workspace"),
         "request_message_roles": _trace_message_roles(request_summary.get("messages")),
         "final_message_roles": _trace_message_roles(msgs),
         "first_system_excerpt": _first_system_excerpt(request_summary.get("messages")),
         "assistant_response_excerpt": _assistant_response_excerpt(response_summary),
-    })
+    }
+    if profile_name == "claude-code":
+        write_log["run_id"] = session_context.get("run_id")
+        write_log["workspace_id"] = session_context.get("workspace_id")
+    _trace_log("trace_write_snapshot", write_log)
     tools = merged.get("tools")
     if tools is not None and not isinstance(tools, list):
         tools = None
     snapshot = {
         "profile": profile_name,
         "session_id": session_id,
-        "run_id": session_context.get("run_id"),
-        "workspace_id": session_context.get("workspace_id"),
         "workspace": session_context.get("workspace"),
         "session_source": session_context.get("source"),
         "messages": msgs,
         "tools": tools,
     }
+    if profile_name == "claude-code":
+        snapshot["run_id"] = session_context.get("run_id")
+        snapshot["workspace_id"] = session_context.get("workspace_id")
+    else:
+        snapshot.pop("run_id", None)
+        snapshot.pop("workspace_id", None)
     path = _get_profile_trace_path(profile_name, profile, session_context)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -2705,7 +2751,12 @@ async def proxy_v1(path: str, request: Request) -> Response:
             if config.proxy.trace:
                 _trace_log(
                     "downstream_request",
-                    {"x_session_id": session_id, "path": f"/v1/{path}", **request_trace},
+                    {
+                        "x_session_id": session_id,
+                        "agent_headers": _agent_header_snapshot(headers),
+                        "path": f"/v1/{path}",
+                        **request_trace,
+                    },
                 )
 
         cleanup_deferred = False

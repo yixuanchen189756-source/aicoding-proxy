@@ -113,7 +113,7 @@ run_id -> session_id
 代理随后把 Claude Code 轨迹写入：
 
 ```text
-traces/claude-code/<workspace_id>/<session_id>/trajectory.json
+traces/claude-code/<session_id>.json
 ```
 
 如果轨迹落到 `__no_session_id__`，只检查这些点：

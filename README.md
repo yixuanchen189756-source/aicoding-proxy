@@ -8,10 +8,10 @@ It is designed for four agent families:
 
 | Agent | Entrypoint | Port | Client protocol | Trajectory root |
 | --- | --- | ---: | --- | --- |
-| OpenCode | `opencode_proxy.py` | `8905` | OpenAI-compatible | `traces/opencode` |
-| Claude Code | `claude_code_proxy.py` | `8906` | Anthropic Messages | `traces/claude-code` |
-| Hermes | `hermes_proxy.py` | `8907` | OpenAI-compatible | `traces/hermes` |
-| OpenClaw | `openclaw_proxy.py` | `8908` | OpenAI-compatible gateway | `traces/openclaw` |
+| OpenCode | `opencode_proxy.py` | `8905` | OpenAI-compatible | `traces/opencode/<session_id>.json` |
+| Claude Code | `claude_code_proxy.py` | `8906` | Anthropic Messages | `traces/claude-code/<session_id>.json` |
+| Hermes | `hermes_proxy.py` | `8907` | OpenAI-compatible | `traces/hermes/<session_id>.json` |
+| OpenClaw | `openclaw_proxy.py` | `8908` | OpenAI-compatible gateway | `traces/openclaw/<session_id>.json` |
 
 The proxy does not replace those agents. It sits between each agent and the upstream model provider so requests can be attributed to the right session, workspace, run, and agent.
 
@@ -76,7 +76,7 @@ There is intentionally no `client.py` entrypoint. Use the dedicated scripts abov
 - Agent-specific header injection:
   - OpenCode: plugin hook
   - Claude Code: wrapper environment + session hook
-  - Hermes: request `extra_headers` patch
+  - Hermes: model-provider plugin
   - OpenClaw: extension + gateway registration
 
 Install Python dependencies:
@@ -178,7 +178,7 @@ Use the proxy host or tailnet IP that your coding-agent machine can reach.
 OpenCode uses `config/opencode/rl-training-headers`, which injects:
 
 ```text
-X-Session-Id: <userName>_<sessionID>
+X-Session-Id: <sessionID>
 X-Turn-Type: main|side
 ```
 
@@ -223,17 +223,20 @@ Guide: [config/claude-code/README.md](config/claude-code/README.md) | [中文](c
 
 ### Hermes
 
-Hermes should send OpenAI-compatible requests to:
+Hermes should use the model-provider plugin in `config/hermes/model-providers/aicoding-proxy-hermes`.
+
+The provider sends OpenAI-compatible requests to:
 
 ```text
 http://<proxy-host>:8907/v1
 ```
 
-Hermes must add request-scoped `extra_headers`:
+It adds request-scoped `extra_headers`:
 
 ```text
-X-Session-Id: <user_name>_<session_id>
-X-Turn-Type: main|side
+X-Session-Id: <session_id>
+X-Turn-Type: main
+X-Agent-Workspace: <workspace-path>
 ```
 
 Guide: [config/hermes/README.md](config/hermes/README.md) | [中文](config/hermes/README.zh-CN.md)
@@ -260,15 +263,18 @@ Guide: [config/openclaw/README.md](config/openclaw/README.md) | [中文](config/
 
 ## Trajectories
 
-The proxy writes JSON trajectories under each agent's configured `session_dir`.
-
-Claude Code uses a workspace/session layout:
+The proxy writes JSON trajectories directly under each agent's configured `session_dir`:
 
 ```text
-traces/claude-code/<workspace_id>/<session_id>/trajectory.json
-traces/claude-code/<workspace_id>/<session_id>/metadata.json
-traces/claude-code/<workspace_id>/runs/<run_id>.json
+traces/opencode/<session_id>.json
+traces/claude-code/<session_id>.json
+traces/hermes/<session_id>.json
+traces/openclaw/<session_id>.json
 ```
+
+Claude Code still uses `run_id` and `workspace_id` internally to bind hook
+events to model requests, but the final trajectory file is keyed by
+`session_id` like the other agents.
 
 Typical normalized trajectory shape:
 

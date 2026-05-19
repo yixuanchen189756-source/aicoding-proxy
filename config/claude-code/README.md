@@ -113,7 +113,7 @@ run_id -> session_id
 The proxy then writes Claude Code trajectories to:
 
 ```text
-traces/claude-code/<workspace_id>/<session_id>/trajectory.json
+traces/claude-code/<session_id>.json
 ```
 
 If traces fall into `__no_session_id__`, check only these things:

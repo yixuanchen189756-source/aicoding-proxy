@@ -24,6 +24,10 @@
         "type": "string",
         "default": "X-Instance-Id"
       },
+      "workspaceHeader": {
+        "type": "string",
+        "default": "X-Agent-Workspace"
+      },
       "instanceId": {
         "type": "string"
       },

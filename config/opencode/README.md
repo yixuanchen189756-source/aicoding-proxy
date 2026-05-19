@@ -52,7 +52,7 @@ profiles:
 Requests are stored under:
 
 ```text
-traces/opencode/
+traces/opencode/<session_id>.json
 ```
 
 ## Plugin Purpose
@@ -60,8 +60,9 @@ traces/opencode/
 `rl-training-headers` injects:
 
 ```text
-X-Session-Id: <userName>_<sessionID>
+X-Session-Id: <sessionID>
 X-Turn-Type: main|side
+X-Agent-Workspace: <workspace-path>
 ```
 
 These headers let the proxy associate each request with a session and classify
@@ -74,12 +75,13 @@ The OpenCode plugin uses:
 ```js
 "chat.headers": async (input, output) => {
   const sessionId = input.sessionID ?? "";
-  const combinedSessionId = `${userName}_${sessionId}`;
   const turnType = SIDE_TRIGGERS.has(input.agent ?? "") ? "side" : "main";
 
   output.headers = {
-    [sessionIdHeader]: combinedSessionId,
+    [sessionIdHeader]: sessionId,
+    "X-Agent-Session-Id": sessionId,
     [turnTypeHeader]: turnType,
+    [workspaceHeader]: workspace,
   };
 }
 ```
@@ -101,11 +103,11 @@ Everything else is `main`.
 
 ## Plugin Configuration
 
-Minimum OpenCode configuration:
+Recommended local OpenCode configuration:
 
 ```json
 {
-  "plugin": ["rl-training-headers"]
+  "plugin": ["./plugins/index.js"]
 }
 ```
 
@@ -114,10 +116,10 @@ Parameterized configuration:
 ```json
 {
   "plugin": [
-    ["rl-training-headers", {
-      "userName": "my-team",
+    ["./plugins/index.js", {
       "sessionIdHeader": "X-Session-Id",
-      "turnTypeHeader": "X-Turn-Type"
+      "turnTypeHeader": "X-Turn-Type",
+      "workspace": "<workspace-path>"
     }]
   ]
 }
@@ -127,39 +129,46 @@ Options:
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `userName` | `default-user` | Prefix added to OpenCode's session ID. |
-| `sessionIdHeader` | `X-Session-Id` | Header name for the combined session ID. |
+| `sessionIdHeader` | `X-Session-Id` | Header name for the OpenCode session ID. |
 | `turnTypeHeader` | `X-Turn-Type` | Header name for main/side classification. |
+| `workspace` | `process.cwd()` | Workspace path sent with each request. |
+| `workspaceHeader` | `X-Agent-Workspace` | Header name for the workspace path. |
+| `debug` | `false` | When `true`, writes plugin lifecycle and hook diagnostics. |
+| `debugFile` | unset | File path for debug logs, for example `~/.config/opencode/rl-training-headers-debug.log`. |
 
 ## Installing the Plugin
 
-For local development, install or link the plugin directory in the way your
-OpenCode installation expects. The package name is:
+OpenCode reliably loads local plugins from its config `plugins/` directory.
+Copy the runtime entrypoint into that directory:
 
-```text
-rl-training-headers
+```bash
+mkdir -p ~/.config/opencode/plugins
+cp config/opencode/rl-training-headers/index.js ~/.config/opencode/plugins/index.js
 ```
 
-The package entrypoint is `index.js`, and `package.json` declares:
+On Windows, the equivalent location is:
+
+```text
+C:\Users\<you>\.config\opencode\plugins\index.js
+```
+
+Then reference the file from `opencode.json`:
 
 ```json
 {
-  "type": "module",
-  "main": "index.js",
-  "exports": {
-    ".": "./index.js"
-  }
+  "plugin": [
+    "./plugins/index.js"
+  ]
 }
 ```
 
-OpenCode typically caches plugins under:
+The package also has a `package.json` and can be imported as
+`rl-training-headers` when it is installed into a Node resolution path, but the
+local `plugins/` file is the recommended setup for this repo. It avoids relying
+on OpenCode's package cache layout, which can vary by installation.
 
-```text
-~/.cache/opencode/packages/
-```
-
-If using a local package, make sure the cached package or symlink points to this
-`rl-training-headers` directory.
+If you edit `config/opencode/rl-training-headers/index.js`, copy it into
+`~/.config/opencode/plugins/index.js` again before retesting.
 
 ## OpenCode Provider Configuration
 
@@ -179,9 +188,7 @@ Conceptual shape:
     }
   },
   "plugin": [
-    ["rl-training-headers", {
-      "userName": "default-user"
-    }]
+    "./plugins/index.js"
   ]
 }
 ```
@@ -189,11 +196,15 @@ Conceptual shape:
 The exact OpenCode config shape can vary by version. The invariant is:
 
 - base URL points to `http://<proxy-host>:8905/v1`
-- plugin `rl-training-headers` is loaded
-- OpenCode requests carry `X-Session-Id`
+- `./plugins/index.js` is loaded
+- OpenCode requests carry `X-Session-Id` or `X-Agent-Session-Id`
+- OpenCode requests carry `X-Agent-Workspace` when workspace metadata is needed
 
 If proxy authentication is disabled, the API key can be any non-empty value. If
 proxy authentication is enabled, it must match `auth.keys` in `config.yaml`.
+
+Only Claude Code uses `run_id` and `workspace_id`. OpenCode does not need either
+one; it can send the plain workspace path as `X-Agent-Workspace`.
 
 ## Verification
 
@@ -206,14 +217,14 @@ opencode debug config --print-logs --log-level DEBUG
 Expected log fragments:
 
 ```text
-service=plugin path=rl-training-headers loading plugin
-[rl-training-headers] activated (chat.headers hook, user: default-user)
+service=plugin path=./plugins/index.js loading plugin
+[rl-training-headers] activated (chat.headers hook)
 ```
 
-Check the module directly:
+Check the plugin file directly:
 
 ```bash
-node -e "import('rl-training-headers').then(m => console.log(m.default.id))"
+node -e "import('./plugins/index.js').then(m => console.log(m.default.id))"
 ```
 
 Expected output:
@@ -225,9 +236,9 @@ rl-training-headers
 Check hook behavior manually:
 
 ```js
-import pluginModule from "rl-training-headers";
+import pluginModule from "./plugins/index.js";
 
-const hooks = await pluginModule.server({}, { userName: "test" });
+const hooks = await pluginModule.server({}, { workspace: "/path/to/workspace" });
 const output = { headers: {} };
 
 await hooks["chat.headers"](
@@ -248,8 +259,10 @@ Expected result:
 
 ```json
 {
-  "X-Session-Id": "test_s1",
-  "X-Turn-Type": "main"
+  "X-Session-Id": "s1",
+  "X-Agent-Session-Id": "s1",
+  "X-Turn-Type": "main",
+  "X-Agent-Workspace": "/path/to/workspace"
 }
 ```
 
@@ -270,7 +283,7 @@ OpenCode's native `chat.headers` hook is better for this use case:
 If trajectories are written under `__no_session_id__`:
 
 - confirm the plugin is loaded
-- confirm `X-Session-Id` is present on the request
+- confirm `X-Session-Id` or `X-Agent-Session-Id` is present on the request
 - confirm OpenCode is using the proxy base URL
 - confirm the request hits port `8905`, not another profile port
 

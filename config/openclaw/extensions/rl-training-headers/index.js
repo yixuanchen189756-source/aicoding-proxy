@@ -40,49 +40,81 @@ function candidateStateDirs() {
   return [...new Set(dirs.filter(Boolean))];
 }
 
-function readGatewayTokenFromOpenClawState(api) {
+function readOpenClawState(api) {
   for (const stateDir of candidateStateDirs()) {
     const path = join(stateDir, "openclaw.json");
     try {
       const raw = readFileSync(path, "utf8");
-      const parsed = JSON.parse(raw);
-      const token = parsed?.gateway?.auth?.token;
-      if (typeof token === "string" && token.trim()) {
-        log(api, "info", `loaded gateway token from ${path}`);
-        return token.trim();
-      }
-      log(api, "warn", `no gateway.auth.token in ${path}`);
+      return { path, data: JSON.parse(raw) };
     } catch (err) {
-      log(api, "warn", `could not read gateway token from ${path}: ${String(err)}`);
+      log(api, "warn", `could not read OpenClaw state from ${path}: ${String(err)}`);
     }
   }
+  return null;
+}
+
+function readGatewayTokenFromOpenClawState(api, state) {
+  const token = state?.data?.gateway?.auth?.token;
+  if (typeof token === "string" && token.trim()) {
+    log(api, "info", `loaded gateway token from ${state?.path}`);
+    return token.trim();
+  }
+  log(api, "warn", "no gateway.auth.token in OpenClaw state");
   return "";
+}
+
+function proxyRegisterUrlFromOpenClawModelBaseUrl(api, state) {
+  const primary = state?.data?.agents?.defaults?.model?.primary;
+  const providerName = typeof primary === "string" ? primary.split("/", 1)[0] : "";
+  const baseUrl = providerName ? state?.data?.models?.providers?.[providerName]?.baseUrl : "";
+  if (typeof baseUrl !== "string" || !baseUrl.trim()) {
+    log(api, "warn", "could not resolve proxy baseUrl from OpenClaw default model provider");
+    return "";
+  }
+  const proxyBase = baseUrl.trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
+  log(api, "info", `resolved proxy register URL from ${providerName}.baseUrl in ${state?.path}`);
+  return `${proxyBase}/register-instance`;
+}
+
+function instanceIdFromGatewayUrl(gatewayUrl) {
+  try {
+    const url = new URL(gatewayUrl);
+    const host = url.hostname.trim();
+    const port = url.port.trim();
+    if (host && port) {
+      return `${host}_${port}`;
+    }
+    if (host) {
+      return host;
+    }
+  } catch {
+    // Fall through to conservative string cleanup.
+  }
+  return gatewayUrl.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").replace(/[^A-Za-z0-9._-]+/g, "_");
 }
 
 function resolveConfig(api) {
   const cfg = api.pluginConfig ?? {};
+  const state = readOpenClawState(api);
+  if (cfg.proxyRegisterUrl || process.env.OPENCLAW_PROXY_REGISTER_URL) {
+    log(api, "warn", "proxyRegisterUrl override is ignored; using OpenClaw default model provider baseUrl");
+  }
   const gatewayPort = cfg.gatewayPort ?? process.env.OPENCLAW_GATEWAY_PORT ?? "18789";
+  const gatewayUrl = cfg.gatewayUrl ?? process.env.OPENCLAW_GATEWAY_URL ?? "";
   return {
     sessionIdHeader: cfg.sessionIdHeader ?? "X-Session-Id",
     turnTypeHeader: cfg.turnTypeHeader ?? "X-Turn-Type",
     instanceIdHeader: cfg.instanceIdHeader ?? "X-Instance-Id",
+    workspaceHeader: cfg.workspaceHeader ?? "X-Agent-Workspace",
     instanceId:
-      cfg.instanceId ??
-      process.env.OPENCLAW_INSTANCE_ID ??
-      process.env.COMPUTERNAME ??
-      "openclaw-default",
+      gatewayUrl ? instanceIdFromGatewayUrl(gatewayUrl) : "openclaw-default",
     proxyRegisterUrl:
-      cfg.proxyRegisterUrl ??
-      process.env.OPENCLAW_PROXY_REGISTER_URL ??
-      "",
-    gatewayUrl:
-      cfg.gatewayUrl ??
-      process.env.OPENCLAW_GATEWAY_URL ??
-      "",
+      proxyRegisterUrlFromOpenClawModelBaseUrl(api, state),
+    gatewayUrl,
     gatewayToken:
       cfg.gatewayToken ??
       process.env.OPENCLAW_GATEWAY_TOKEN ??
-      readGatewayTokenFromOpenClawState(api),
+      readGatewayTokenFromOpenClawState(api, state),
     gatewayPort,
     registerOnStart: cfg.registerOnStart ?? true,
   };
@@ -98,11 +130,9 @@ export default function register(api) {
     `resolved config instanceId=${config.instanceId}, proxyRegisterUrl=${config.proxyRegisterUrl}, gatewayUrl=${config.gatewayUrl}, gatewayPort=${config.gatewayPort}, hasGatewayToken=${Boolean(config.gatewayToken)}`,
   );
 
-  const FIXED_USER_NAME = "your-fixed-user-name";
-
   let hasRegistered = false;
 
-  async function registerGatewayInstance(reason) {
+  async function registerGatewayInstance(reason, workspace = process.cwd()) {
     if (!config.registerOnStart) {
       log(api, "info", `registration disabled (${reason})`);
       return;
@@ -121,6 +151,7 @@ export default function register(api) {
       gateway_url: config.gatewayUrl,
       gateway_token: config.gatewayToken,
       gateway_port: config.gatewayPort,
+      workspace,
       source: "rl-training-headers",
       reason,
       updated_at: new Date().toISOString(),
@@ -173,20 +204,19 @@ export default function register(api) {
 
   api.on("before_prompt_build", (_event, ctx) => {
     log(api, "info", `before_prompt_build sessionId=${ctx.sessionId ?? ""}, trigger=${ctx.trigger ?? ""}, hasRegistered=${hasRegistered}`);
-    if (!hasRegistered) {
-      registerGatewayInstance("before_prompt_build").catch((err) => {
-        log(api, "warn", `registration retry failed: ${String(err)}`);
-      });
-    }
+    const workspace = String(ctx.workspace ?? ctx.workspaceDir ?? process.cwd() ?? "").trim();
+    registerGatewayInstance(hasRegistered ? "before_prompt_build_refresh" : "before_prompt_build", workspace).catch((err) => {
+      log(api, "warn", `registration retry failed: ${String(err)}`);
+    });
 
     const sessionId = ctx.sessionId ?? "";
-    const combinedSessionId = `${FIXED_USER_NAME}_${sessionId}`;
 
     const turnType = SIDE_TRIGGERS.has(ctx.trigger ?? "") ? "side" : "main";
     pendingHeaders = {
-      [config.sessionIdHeader]: combinedSessionId,
+      [config.sessionIdHeader]: sessionId,
       [config.turnTypeHeader]: turnType,
       [config.instanceIdHeader]: config.instanceId,
+      [config.workspaceHeader]: workspace,
     };
     return {};
   });
