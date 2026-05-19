@@ -1,6 +1,6 @@
 ﻿# AI Coding Proxy
 
-Language / 璇█: English | [绠€浣撲腑鏂嘳(README.zh-CN.md)
+Language / 语言: English | [简体中文](README.zh-CN.md)
 
 AI Coding Proxy is a small, file-oriented proxy package for collecting coding-agent traces while routing model requests to configured upstream LLM providers.
 
@@ -188,7 +188,7 @@ Point OpenCode's OpenAI-compatible provider at:
 http://<proxy-host>:8905/v1
 ```
 
-Guide: [config/opencode/README.md](config/opencode/README.md) | [涓枃](config/opencode/README.zh-CN.md)
+Guide: [config/opencode/README.md](config/opencode/README.md) | [中文](config/opencode/README.zh-CN.md)
 
 ### Claude Code
 
@@ -219,7 +219,7 @@ The hook endpoint is:
 http://<proxy-host>:8906/_agent/session-event
 ```
 
-Guide: [config/claude-code/README.md](config/claude-code/README.md) | [涓枃](config/claude-code/README.zh-CN.md)
+Guide: [config/claude-code/README.md](config/claude-code/README.md) | [中文](config/claude-code/README.zh-CN.md)
 
 ### Hermes
 
@@ -239,7 +239,7 @@ X-Turn-Type: main
 X-Agent-Workspace: <workspace-path>
 ```
 
-Guide: [config/hermes/README.md](config/hermes/README.md) | [涓枃](config/hermes/README.zh-CN.md)
+Guide: [config/hermes/README.md](config/hermes/README.md) | [中文](config/hermes/README.zh-CN.md)
 
 ### OpenClaw
 
@@ -259,7 +259,7 @@ X-Instance-Id
 
 It also registers the OpenClaw gateway URL/token with `openclaw_proxy.py`, which lets the proxy route requests for each instance.
 
-Guide: [config/openclaw/README.md](config/openclaw/README.md) | [涓枃](config/openclaw/README.zh-CN.md)
+Guide: [config/openclaw/README.md](config/openclaw/README.md) | [中文](config/openclaw/README.zh-CN.md)
 
 ## Traces
 

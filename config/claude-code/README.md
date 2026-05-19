@@ -1,6 +1,6 @@
 ﻿# Claude Code Proxy Configuration
 
-Language / 璇█: English | [绠€浣撲腑鏂嘳(README.zh-CN.md)
+Language / 语言: English | [简体中文](README.zh-CN.md)
 
 Claude Code integration has two moving pieces:
 

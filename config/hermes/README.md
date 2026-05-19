@@ -1,6 +1,6 @@
 ﻿# Hermes Proxy Configuration
 
-Language: English | [绠€浣撲腑鏂嘳(README.zh-CN.md)
+Language / 语言: English | [简体中文](README.zh-CN.md)
 
 Hermes should use the AI Coding Proxy through a Hermes model-provider plugin, not by editing Hermes source code.
 
