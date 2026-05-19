@@ -116,6 +116,12 @@ The proxy then writes Claude Code trajectories to:
 traces/claude-code/<session_id>.json
 ```
 
+Hook/run binding metadata is written once per active session:
+
+```text
+traces/claude-code/_metadata/<workspace_id>/<session_id>.json
+```
+
 If traces fall into `__no_session_id__`, check only these things:
 
 1. Claude Code was started through the wrapper.

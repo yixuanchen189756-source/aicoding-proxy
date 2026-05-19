@@ -1850,8 +1850,8 @@ async def _persist_agent_session_metadata(entry: dict[str, Any]) -> None:
     config = get_config()
     profile = config.profiles.get("claude-code")
     trace_root = Path(profile.session_dir if profile and profile.session_dir else "traces")
-    base = trace_root / "claude-code" / "_metadata" / workspace_id
-    run_path = base / "runs" / f"{run_id}.json"
+    file_stem = _safe_filename(session_id) if session_id else run_id
+    metadata_path = trace_root / "_metadata" / workspace_id / f"{file_stem}.json"
 
     def _write_json(path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1860,10 +1860,7 @@ async def _persist_agent_session_metadata(entry: dict[str, Any]) -> None:
             json.dump(payload, f, ensure_ascii=False, indent=2)
         tmp.replace(path)
 
-    await asyncio.to_thread(_write_json, run_path, entry)
-    if session_id:
-        session_path = base / "sessions" / f"{_safe_filename(session_id)}.json"
-        await asyncio.to_thread(_write_json, session_path, entry)
+    await asyncio.to_thread(_write_json, metadata_path, entry)
 
 
 async def _record_agent_session_event(event: dict[str, Any], persist: bool = True) -> dict[str, Any]:
@@ -2180,6 +2177,30 @@ def _is_conversation_summary_request(request_summary: dict[str, Any]) -> bool:
     return has_summary_system and has_title_user
 
 
+def _is_claude_internal_policy_request(request_summary: dict[str, Any]) -> bool:
+    messages = request_summary.get("messages")
+    if not isinstance(messages, list):
+        return False
+
+    has_internal_task_system = False
+    has_policy_spec = False
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        normalized = content.lower()
+        if message.get("role") == "system" and (
+            "your task is to" in normalized
+            and "policy spec" in normalized
+        ):
+            has_internal_task_system = True
+        if message.get("role") == "user" and "<policy_spec>" in normalized:
+            has_policy_spec = True
+    return has_internal_task_system and has_policy_spec
+
+
 def _trace_message_roles(messages: Any) -> list[str]:
     if not isinstance(messages, list):
         return []
@@ -2286,7 +2307,11 @@ async def _overwrite_session_trace(
     topic_request = _is_new_topic_detection_request(request_summary)
     topic_response = _is_new_topic_detection_response(response_summary)
     summary_request = _is_conversation_summary_request(request_summary)
-    if title_request or title_response or topic_request or topic_response or summary_request:
+    internal_policy_request = (
+        profile_name == "claude-code"
+        and _is_claude_internal_policy_request(request_summary)
+    )
+    if title_request or title_response or topic_request or topic_response or summary_request or internal_policy_request:
         skip_log = {
             "profile": profile_name,
             "session_id": session_id,
@@ -2297,6 +2322,7 @@ async def _overwrite_session_trace(
                 "new_topic_request": topic_request,
                 "new_topic_response": topic_response,
                 "conversation_summary_request": summary_request,
+                "internal_policy_request": internal_policy_request,
             },
             "request_message_roles": _trace_message_roles(request_summary.get("messages")),
             "first_system_excerpt": _first_system_excerpt(request_summary.get("messages")),
