@@ -1,6 +1,6 @@
-# Claude Code Proxy Configuration
+﻿# Claude Code Proxy Configuration
 
-Language / 语言: English | [简体中文](README.zh-CN.md)
+Language / 璇█: English | [绠€浣撲腑鏂嘳(README.zh-CN.md)
 
 Claude Code integration has two moving pieces:
 
@@ -110,7 +110,7 @@ The wrapper puts `X-Agent-Run-Id` into every model request. The hook posts:
 run_id -> session_id
 ```
 
-The proxy then writes Claude Code trajectories to:
+The proxy then writes Claude Code traces to:
 
 ```text
 traces/claude-code/<session_id>.json

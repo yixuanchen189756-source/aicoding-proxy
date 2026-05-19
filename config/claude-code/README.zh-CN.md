@@ -1,15 +1,10 @@
-# Claude Code 代理配置
+﻿# Claude Code 浠ｇ悊閰嶇疆
 
-语言 / Language: [English](README.md) | 简体中文
-
-Claude Code 集成只有两个部分：
-
-1. wrapper 启动 Claude Code，并设置稳定的 run/workspace headers。
-2. hook 接收 Claude Code 的 `session_id`，并注册到代理。
-
-`ANTHROPIC_BASE_URL` 由 Claude Code 自己的 settings 配置。这些脚本不会读取 `.env`，不会猜其他配置 key，也不会改写模型地址。
-
-## 文件
+璇█ / Language: [English](README.md) | 绠€浣撲腑鏂?
+Claude Code 闆嗘垚鍙湁涓や釜閮ㄥ垎锛?
+1. wrapper 鍚姩 Claude Code锛屽苟璁剧疆绋冲畾鐨?run/workspace headers銆?2. hook 鎺ユ敹 Claude Code 鐨?`session_id`锛屽苟娉ㄥ唽鍒颁唬鐞嗐€?
+`ANTHROPIC_BASE_URL` 鐢?Claude Code 鑷繁鐨?settings 閰嶇疆銆傝繖浜涜剼鏈笉浼氳鍙?`.env`锛屼笉浼氱寽鍏朵粬閰嶇疆 key锛屼篃涓嶄細鏀瑰啓妯″瀷鍦板潃銆?
+## 鏂囦欢
 
 ```text
 config/claude-code/
@@ -23,8 +18,7 @@ config/claude-code/
 
 ## Claude Settings
 
-在 Claude settings 中配置代理地址：
-
+鍦?Claude settings 涓厤缃唬鐞嗗湴鍧€锛?
 ```json
 {
   "env": {
@@ -33,25 +27,21 @@ config/claude-code/
 }
 ```
 
-使用裸 base URL，不要加 `/v1`。
+浣跨敤瑁?base URL锛屼笉瑕佸姞 `/v1`銆?
+## 鍚姩 Claude Code
 
-## 启动 Claude Code
-
-通过 wrapper 启动 Claude Code，这样模型请求会带上 run metadata headers。
-
-Linux/macOS：
-
+閫氳繃 wrapper 鍚姩 Claude Code锛岃繖鏍锋ā鍨嬭姹備細甯︿笂 run metadata headers銆?
+Linux/macOS锛?
 ```bash
 sh config/claude-code/scripts/claude_code_rl.sh
 ```
 
-Windows：
-
+Windows锛?
 ```bat
 config\claude-code\scripts\claude_code_rl.bat
 ```
 
-wrapper 只设置：
+wrapper 鍙缃細
 
 ```text
 CLAUDE_CODE_RUN_ID
@@ -61,26 +51,23 @@ CLAUDE_CODE_INSTANCE_ID
 ANTHROPIC_CUSTOM_HEADERS
 ```
 
-`ANTHROPIC_BASE_URL` 由 Claude Code 处理。
-
+`ANTHROPIC_BASE_URL` 鐢?Claude Code 澶勭悊銆?
 ## Hook Settings
 
-把 `claude_code_session_hook.py` 复制到稳定的 Claude hook 位置，例如：
+鎶?`claude_code_session_hook.py` 澶嶅埗鍒扮ǔ瀹氱殑 Claude hook 浣嶇疆锛屼緥濡傦細
 
 ```text
 ~/.claude/hooks/claude_code_session_hook.py
 ```
 
-Linux/macOS：
-
+Linux/macOS锛?
 ```json
 {
   "command": "python3 ~/.claude/hooks/claude_code_session_hook.py"
 }
 ```
 
-Windows：
-
+Windows锛?
 ```json
 {
   "command": "python C:\\Users\\PC-M\\.claude\\hooks\\claude_code_session_hook.py",
@@ -88,37 +75,30 @@ Windows：
 }
 ```
 
-Linux 不需要 `shell` 字段。Windows 应该使用 `"shell": "powershell"`。
-
-hook 只使用一个代理来源：
+Linux 涓嶉渶瑕?`shell` 瀛楁銆俉indows 搴旇浣跨敤 `"shell": "powershell"`銆?
+hook 鍙娇鐢ㄤ竴涓唬鐞嗘潵婧愶細
 
 ```text
 ANTHROPIC_BASE_URL
 ```
 
-它把 session event POST 到：
+瀹冩妸 session event POST 鍒帮細
 
 ```text
 <ANTHROPIC_BASE_URL>/_agent/session-event
 ```
 
-## 轨迹绑定
+## 杞ㄨ抗缁戝畾
 
-wrapper 会把 `X-Agent-Run-Id` 放进每个模型请求。hook 上报：
-
+wrapper 浼氭妸 `X-Agent-Run-Id` 鏀捐繘姣忎釜妯″瀷璇锋眰銆俬ook 涓婃姤锛?
 ```text
 run_id -> session_id
 ```
 
-代理随后把 Claude Code 轨迹写入：
-
+浠ｇ悊闅忓悗鎶?Claude Code 杞ㄨ抗鍐欏叆锛?
 ```text
 traces/claude-code/<session_id>.json
 ```
 
-如果轨迹落到 `__no_session_id__`，只检查这些点：
-
-1. Claude Code 是否通过 wrapper 启动。
-2. Claude settings 里的 `ANTHROPIC_BASE_URL` 是否正确。
-3. hook 是否运行并收到 `session_id`。
-4. wrapper 的 `CLAUDE_CODE_RUN_ID` 是否和 hook 环境一致。
+濡傛灉杞ㄨ抗钀藉埌 `__no_session_id__`锛屽彧妫€鏌ヨ繖浜涚偣锛?
+1. Claude Code 鏄惁閫氳繃 wrapper 鍚姩銆?2. Claude settings 閲岀殑 `ANTHROPIC_BASE_URL` 鏄惁姝ｇ‘銆?3. hook 鏄惁杩愯骞舵敹鍒?`session_id`銆?4. wrapper 鐨?`CLAUDE_CODE_RUN_ID` 鏄惁鍜?hook 鐜涓€鑷淬€?

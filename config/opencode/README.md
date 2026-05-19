@@ -1,8 +1,8 @@
-# OpenCode Proxy Configuration
+﻿# OpenCode Proxy Configuration
 
-Language / 语言: English | [简体中文](README.zh-CN.md)
+Language / 璇█: English | [绠€浣撲腑鏂嘳(README.zh-CN.md)
 
-This folder contains the OpenCode integration for RL trajectory collection.
+This folder contains the OpenCode integration for RL trace collection.
 
 OpenCode is the simplest supported client because its plugin API exposes a
 native `chat.headers` hook. The plugin can inject request headers directly
@@ -280,7 +280,7 @@ OpenCode's native `chat.headers` hook is better for this use case:
 
 ## Troubleshooting
 
-If trajectories are written under `__no_session_id__`:
+If traces are written under `__no_session_id__`:
 
 - confirm the plugin is loaded
 - confirm `X-Session-Id` or `X-Agent-Session-Id` is present on the request

@@ -1,6 +1,6 @@
-# Hermes Proxy Configuration
+﻿# Hermes Proxy Configuration
 
-Language: English | [简体中文](README.zh-CN.md)
+Language: English | [绠€浣撲腑鏂嘳(README.zh-CN.md)
 
 Hermes should use the AI Coding Proxy through a Hermes model-provider plugin, not by editing Hermes source code.
 
@@ -28,7 +28,7 @@ profiles:
     usage_json: "usage/hermes/usage.json"
 ```
 
-Hermes trajectories are written as:
+Hermes traces are written as:
 
 ```text
 traces/hermes/<session_id>.json
@@ -79,7 +79,7 @@ Use the actual proxy host that the Hermes machine can reach.
 
 If `proxy/config.yaml` has `auth.enabled: false`, `api_key` only needs to be non-empty. If proxy auth is enabled, `api_key` must match one of `auth.keys`.
 
-The explicit `auxiliary.title_generation` block keeps Hermes' background session-title request on the same proxy endpoint. It is optional for trajectory headers, but it avoids Hermes falling back to another provider when generating titles.
+The explicit `auxiliary.title_generation` block keeps Hermes' background session-title request on the same proxy endpoint. It is optional for trace headers, but it avoids Hermes falling back to another provider when generating titles.
 
 ## Tailnet And Proxy Bypass
 
@@ -169,7 +169,7 @@ Each request appends one JSON line showing whether a `session_id` and workspace 
 
 Usually no.
 
-Only edit `proxy/config.yaml` if you want to change the proxy listener port, upstream backend, usage file, auth keys, or trajectory folder:
+Only edit `proxy/config.yaml` if you want to change the proxy listener port, upstream backend, usage file, auth keys, or trace folder:
 
 ```yaml
 profiles:

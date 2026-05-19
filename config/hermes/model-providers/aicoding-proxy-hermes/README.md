@@ -1,6 +1,6 @@
-# AI Coding Proxy Hermes Provider
+﻿# AI Coding Proxy Hermes Provider
 
-This Hermes model-provider plugin routes Hermes through `hermes_proxy.py` and adds request-scoped trajectory headers without editing Hermes source code.
+This Hermes model-provider plugin routes Hermes through `hermes_proxy.py` and adds request-scoped trace headers without editing Hermes source code.
 
 Install it by copying this directory to:
 
