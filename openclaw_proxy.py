@@ -969,15 +969,6 @@ def _extract_turn_pairs(
     current_user: Optional[str] = None
 
     all_msgs = list(messages) if messages else []
-    # 如果 messages 里没有 user，尝试从 req_messages 中补充（取最后一个非内部 user）
-    if req_messages and not any(m.get("role") == "user" for m in all_msgs):
-        for m in reversed(req_messages):
-            if isinstance(m, dict) and m.get("role") == "user":
-                content = _extract_text_from_content(m.get("content"))
-                if content and content.strip() != "/clear-memory":
-                    if not _is_openclaw_internal_message(content):
-                        current_user = content
-                        break
 
     for msg in all_msgs:
         if not isinstance(msg, dict):
@@ -1014,7 +1005,7 @@ def _build_completion_judge_prompt(
     策略：传入所有 (用户任务 → AI最终回答) 交互对，
     而不是只看最后一条消息。工具调用中间过程忽略。
     """
-    pairs = _extract_turn_pairs(messages, req_messages)
+    pairs = _extract_turn_pairs(messages)
 
     # 截断辅助
     def trunc(s: str, max_len: int) -> str:
@@ -1027,8 +1018,6 @@ def _build_completion_judge_prompt(
     if not turns_text:
         # 保底：一条交互都没有，才用旧方式
         user_text = _get_last_user_text(messages) or ""
-        if not user_text and req_messages:
-            user_text = _get_last_user_text(req_messages) or ""
         assistant_text = _get_last_assistant_text(messages) or ""
         turns_text = f"\n用户: {trunc(user_text, 300)}\nAI: {trunc(assistant_text, 500)}\n"
 
@@ -1049,6 +1038,34 @@ def _build_completion_judge_prompt(
         "只回答 YES 或 NO。\n"
         + turns_text
     )
+
+
+def _extract_yes_no_decision(content: str, reasoning_content: str = "") -> tuple[str, bool]:
+    """Return the leading YES/NO judge answer, ignoring leaked thinking text."""
+
+    def clean(text: str) -> str:
+        text = re.sub(r"```json.*?```", "", text or "", flags=re.DOTALL).strip()
+        return text
+
+    content_clean = clean(content)
+    reasoning_clean = clean(reasoning_content)
+
+    candidates: list[str] = []
+    if content_clean:
+        candidates.append(content_clean)
+        if "</think>" in content_clean:
+            before, _, after = content_clean.partition("</think>")
+            candidates.extend([before.strip(), after.strip()])
+    if reasoning_clean:
+        candidates.append(reasoning_clean)
+
+    for candidate in candidates:
+        match = re.match(r"^\s*(YES|NO)\b", candidate, flags=re.IGNORECASE)
+        if match:
+            token = match.group(1).upper()
+            return token, token == "YES"
+
+    return "", False
 
 
 async def _llm_judge_completion(
@@ -1115,23 +1132,26 @@ async def _llm_judge_completion(
                 print(f"[detect-llm] LLM 无响应 choices=[]", file=sys.stderr, flush=True)
                 return False
             msg = choices[0].get("message", {})
-            # glm 模型：可见回答在 content，思考过程在 reasoning_content
-            content = (msg.get("content") or "").strip()
-            # fallback：如果 content 为空但 reasoning_content 有实质内容，用它（去掉思考标记）
-            if not content and msg.get("reasoning_content"):
-                reasoning = msg.get("reasoning_content") or ""
-                # 去掉 ```json...``` 块
-                reasoning = re.sub(r"```json.*?```", "", reasoning, flags=re.DOTALL).strip()
-                # 找第一个 YES/NO
-                yes_no = re.search(r"\b(YES|NO)\b", reasoning, re.IGNORECASE)
-                if yes_no:
-                    content = yes_no.group(1).upper()
-                    print(f"[detect-llm] content 为空，从 reasoning_content fallback 提取: '{content}'", file=sys.stderr, flush=True)
-            print(f"[detect-llm] LLM 原始回答: '{content}', reasoning长度={len(msg.get('reasoning_content') or '')}", file=sys.stderr, flush=True)
-
-            content_upper = content.upper()
+            # Some OpenAI-compatible GLM endpoints leak hidden thinking across
+            # content/reasoning_content, e.g. "NO</think>..." in content. The
+            # judge contract is only the leading YES/NO token.
+            raw_content = str(msg.get("content") or "")
+            raw_reasoning = str(msg.get("reasoning_content") or "")
+            decision_token, decision = _extract_yes_no_decision(raw_content, raw_reasoning)
+            print(
+                f"[detect-llm] LLM 原始 content: {raw_content!r}, reasoning长度={len(raw_reasoning)}",
+                file=sys.stderr,
+                flush=True,
+            )
+            if raw_reasoning:
+                print(
+                    f"[detect-llm] LLM reasoning 预览: {raw_reasoning[:300]!r}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             total_elapsed = (time.perf_counter() - t0) * 1000
-            if "YES" in content_upper:
+            print(f"[detect-llm] YES/NO decision token: '{decision_token or '<none>'}'", file=sys.stderr, flush=True)
+            if decision:
                 print(f"[detect-llm] 判定: 任务完成, 总耗时={total_elapsed:.2f}ms", file=sys.stderr, flush=True)
                 return True
             print(f"[detect-llm] 判定: 任务未完成, 总耗时={total_elapsed:.2f}ms", file=sys.stderr, flush=True)
@@ -1548,7 +1568,20 @@ def _extract_messages_for_task(
             messages.append(_clean_message_content(first_msg))
 
     # 提取 start_index 之后的消息
-    for msg in all_messages[start_index:]:
+    task_messages = all_messages[start_index:]
+    if start_index > 0:
+        first_user_offset = next(
+            (
+                idx
+                for idx, msg in enumerate(task_messages)
+                if isinstance(msg, dict) and msg.get("role") == "user"
+            ),
+            None,
+        )
+        if first_user_offset is not None:
+            task_messages = task_messages[first_user_offset:]
+
+    for msg in task_messages:
         if isinstance(msg, dict):
             cleaned = _clean_message_content(msg)
             if cleaned.get("role") == "user" and not str(cleaned.get("content") or "").strip():
@@ -1734,9 +1767,6 @@ async def _accumulate_session_trace(
     print(f"[accumulate][{session_id}] === 开始处理, elapsed=0.000ms", file=sys.stderr, flush=True)
 
     # 使用组合键区分不同实例
-    state_key = _make_state_key(instance_id, session_id)
-    print(f"[accumulate][{session_id}] state_key={state_key}, elapsed={(time.perf_counter()-t0)*1000:.2f}ms", file=sys.stderr, flush=True)
-
     if not SESSION_FOLDER or _trajectories_lock is None:
         elapsed = (time.perf_counter() - t0) * 1000
         print(f"[accumulate][{session_id}] ❌ 提前返回！SESSION_FOLDER 或 _trajectories_lock 为空, elapsed={elapsed:.2f}ms", file=sys.stderr, flush=True)
@@ -1744,6 +1774,8 @@ async def _accumulate_session_trace(
 
     # ✅ 检测是否是 /clear-memory 内部轮次（整轮跳过）
     req_messages = request_summary.get("messages", [])
+    state_key = _make_state_key(instance_id, session_id)
+    print(f"[accumulate][{session_id}] state_key={state_key}, elapsed={(time.perf_counter()-t0)*1000:.2f}ms", file=sys.stderr, flush=True)
     t2 = time.perf_counter()
     if isinstance(req_messages, list):
         for msg in reversed(req_messages):
@@ -1816,7 +1848,7 @@ async def _accumulate_session_trace(
         # 不确定，调用 LLM 兜底（glm 模型只取 content，不看 reasoning_content）
         print(f"[accumulate][{session_id}] 无关键词匹配，调用 LLM 判断", file=sys.stderr, flush=True)
         t5 = time.perf_counter()
-        task_completed = await _llm_judge_completion(messages, response_summary, req_messages)
+        task_completed = await _llm_judge_completion(messages, response_summary)
         llm_elapsed = (time.perf_counter() - t5) * 1000
         print(f"[accumulate][{session_id}] LLM 判定结果: {task_completed}, LLM 耗时={llm_elapsed:.2f}ms", file=sys.stderr, flush=True)
 
@@ -1827,7 +1859,9 @@ async def _accumulate_session_trace(
             # ✅ 更新任务起始索引
             # req_messages 是请求带来的消息，本轮还追加了1条 assistant 响应
             # 下一个任务应从 assistant 响应之后开始，所以 +1
-            new_start = (len(req_messages) + 1) if isinstance(req_messages, list) else 1
+            # The next OpenClaw request history starts the next task at the
+            # current request length. Adding one skips that first new user turn.
+            new_start = len(req_messages) if isinstance(req_messages, list) else 1
             _task_start_index[state_key] = new_start
             _task_file_index[state_key] = task_index + 1
         save_elapsed = (time.perf_counter() - t6) * 1000

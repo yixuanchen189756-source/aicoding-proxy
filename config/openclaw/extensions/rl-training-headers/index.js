@@ -122,6 +122,54 @@ function resolveConfig(api) {
 
 const SIDE_TRIGGERS = new Set(["heartbeat", "memory", "cron"]);
 
+function stableSessionId(ctx) {
+  return String(ctx.sessionId ?? "").trim();
+}
+
+function fetchTarget(input) {
+  if (typeof input === "string") {
+    return input;
+  }
+  return String(input?.url ?? input ?? "");
+}
+
+function preview(value, limit = 120) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return text.length > limit ? `${text.slice(0, limit)}...` : text;
+}
+
+function summarizeBody(body) {
+  if (typeof body !== "string") {
+    return "";
+  }
+  try {
+    const parsed = JSON.parse(body);
+    const messages = Array.isArray(parsed?.messages) ? parsed.messages : [];
+    const last = [...messages].reverse().find((msg) => msg?.role === "user");
+    return `model=${preview(parsed?.model, 80)} messages=${messages.length} lastUser=${preview(last?.content)}`;
+  } catch {
+    return `raw=${preview(body)}`;
+  }
+}
+
+function summarizeEvent(event) {
+  if (!event || typeof event !== "object") {
+    return "";
+  }
+  const parts = [];
+  for (const key of Object.keys(event).slice(0, 12)) {
+    const value = event[key];
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      parts.push(`${key}=${preview(value, 80)}`);
+    } else if (Array.isArray(value)) {
+      parts.push(`${key}=array(${value.length})`);
+    } else if (value && typeof value === "object") {
+      parts.push(`${key}=object(${Object.keys(value).slice(0, 6).join(",")})`);
+    }
+  }
+  return parts.join(" ");
+}
+
 export default function register(api) {
   const config = resolveConfig(api);
   log(
@@ -170,6 +218,8 @@ export default function register(api) {
   }
 
   let pendingHeaders = null;
+  let pendingContext = null;
+  let promptSeq = 0;
 
   const originalFetch = globalThis.fetch;
 
@@ -182,6 +232,11 @@ export default function register(api) {
           merged.set(k, v);
         }
       }
+      log(
+        api,
+        "info",
+        `fetch POST applying headers seq=${pendingContext?.seq ?? ""} target=${preview(fetchTarget(input), 180)} xSession=${pendingHeaders[config.sessionIdHeader] ?? ""} rawSessionId=${pendingContext?.rawSessionId ?? ""} sessionKey=${pendingContext?.sessionKey ?? ""} trigger=${pendingContext?.trigger ?? ""} body=${summarizeBody(init?.body)}`,
+      );
       return originalFetch.call(globalThis, input, { ...init, headers: merged });
     }
     return originalFetch.call(globalThis, input, init);
@@ -203,13 +258,13 @@ export default function register(api) {
   });
 
   api.on("before_prompt_build", (_event, ctx) => {
-    log(api, "info", `before_prompt_build sessionId=${ctx.sessionId ?? ""}, trigger=${ctx.trigger ?? ""}, hasRegistered=${hasRegistered}`);
+    const sessionId = stableSessionId(ctx);
+    const seq = ++promptSeq;
+    log(api, "info", `before_prompt_build seq=${seq} sessionId=${ctx.sessionId ?? ""}, sessionKey=${ctx.sessionKey ?? ""}, effectiveSessionId=${sessionId}, trigger=${ctx.trigger ?? ""}, hasRegistered=${hasRegistered}, event=${summarizeEvent(_event)}`);
     const workspace = String(ctx.workspace ?? ctx.workspaceDir ?? process.cwd() ?? "").trim();
     registerGatewayInstance(hasRegistered ? "before_prompt_build_refresh" : "before_prompt_build", workspace).catch((err) => {
       log(api, "warn", `registration retry failed: ${String(err)}`);
     });
-
-    const sessionId = ctx.sessionId ?? "";
 
     const turnType = SIDE_TRIGGERS.has(ctx.trigger ?? "") ? "side" : "main";
     pendingHeaders = {
@@ -218,12 +273,19 @@ export default function register(api) {
       [config.instanceIdHeader]: config.instanceId,
       [config.workspaceHeader]: workspace,
     };
+    pendingContext = {
+      seq,
+      rawSessionId: String(ctx.sessionId ?? ""),
+      sessionKey: String(ctx.sessionKey ?? ""),
+      trigger: String(ctx.trigger ?? ""),
+    };
     return {};
   });
 
   api.on("agent_end", () => {
-    log(api, "info", "agent_end clearing pending headers");
+    log(api, "info", `agent_end clearing pending headers seq=${pendingContext?.seq ?? ""} xSession=${pendingHeaders?.[config.sessionIdHeader] ?? ""} rawSessionId=${pendingContext?.rawSessionId ?? ""} sessionKey=${pendingContext?.sessionKey ?? ""}`);
     pendingHeaders = null;
+    pendingContext = null;
   });
 
   log(api, "info", "activated (fetch patched, with gateway registration)");

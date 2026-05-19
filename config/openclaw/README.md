@@ -1,8 +1,8 @@
-# OpenClaw Proxy Configuration
+﻿# OpenClaw Proxy Configuration
 
-Language / 语言: English | [简体中文](README.zh-CN.md)
+Language / 璇█: English | [绠€浣撲腑鏂嘳(README.zh-CN.md)
 
-This folder contains the OpenClaw-specific integration assets for RL trajectory
+This folder contains the OpenClaw-specific integration assets for RL trace
 collection.
 
 OpenClaw is handled separately from the shared profile core. Use
@@ -41,7 +41,7 @@ python openclaw_proxy.py
 
 `openclaw_proxy.py` is the actual OpenClaw proxy service. It reads the top-level
 `openclaw` block from `proxy/config.yaml` for its listener port, upstream
-backend, and trajectory directory.
+backend, and trace directory.
 
 By default, the current OpenClaw proxy listens on:
 
@@ -86,7 +86,7 @@ OPENAI_PROXY_TRACE=1
   Print request/response trace summaries to stderr.
 
 OPENAI_PROXY_SESSION_FOLDER
-  Root directory for per-session trajectory folders. Each session is written as
+  Root directory for per-session trace folders. Each session is written as
   <session_id>/task_<i>.json. If this is unset, the proxy uses openclaw.session_dir
   from proxy/config.yaml; if that is also unset, it uses the current working
   directory.
@@ -171,17 +171,17 @@ workspace memory should be reset from templates.
 Format:
 
 ```text
-<fixed-user-name>_<openclaw-session-id>
+<openclaw-session-id>
 ```
 
-The current extension code uses a fixed user namespace in `index.ts`:
+The extension uses OpenClaw's `ctx.sessionId` as the trace session ID. Do not
+use `ctx.sessionKey` for trace grouping: OpenClaw may create separate
+`dashboard` and `openai` session keys for the same visible conversation or for
+internal requests such as `/clear-memory`.
 
-```ts
-const FIXED_USER_NAME = "your-fixed-user-name";
-```
-
-Change this before production use if you need per-user or per-machine
-namespacing.
+This keeps all user-facing tasks from the same OpenClaw conversation in one
+trace folder while still allowing the proxy to split that folder into
+`task_<i>.json` files.
 
 ### X-Turn-Type
 
@@ -203,7 +203,7 @@ Everything else is `main`.
 ### X-Instance-Id
 
 Identifies the OpenClaw instance. This lets the proxy keep gateway registrations
-and trajectories separate when multiple OpenClaw instances call the same proxy.
+and traces separate when multiple OpenClaw instances call the same proxy.
 
 The plugin derives this from the OpenClaw gateway URL origin:
 
@@ -308,20 +308,31 @@ OpenClaw starts
   -> extension POSTs registration to openclaw_proxy.py
   -> proxy stores gateway_instances.json
   -> later LLM requests carry X-Instance-Id and X-Session-Id
-  -> each new session triggers one /clear-memory request to the gateway
+  -> proxy writes traces by session/task and detects task completion
+  -> each completed task triggers one /clear-memory request to the gateway
   -> proxy can route/attribute requests for that instance
 ```
 
-Trajectory files are stored under:
+Trace files are stored under:
 
 ```text
-<openclaw.session_dir>/<session_id>/task_1.json
-<openclaw.session_dir>/<session_id>/task_2.json
+traces/openclaw/<session_id>/task_1.json
+traces/openclaw/<session_id>/task_2.json
 ```
 
 The current `task_<i>.json` file is updated as the turn evolves. When the proxy
 detects that a task is complete, the next user-facing task advances to the next
 task file.
+
+This is intentional: OpenClaw traces are split by task, not only by session.
+After a task is complete, the proxy notifies the OpenClaw gateway to run
+`/clear-memory`. That command resets the configured workspace memory files from
+templates, so the next task begins with a clean slate while still staying under
+the same session folder when the user continues the session.
+
+OpenClaw may create additional internal `openai` session contexts while handling
+the `/clear-memory` request. Those requests are skipped by the trace writer and
+should not become the session folder for the user-facing conversation.
 
 Registration payload shape:
 
@@ -354,8 +365,9 @@ Useful messages:
 - `service start hook fired`
 - `registering gateway instance`
 - `registered gateway instance`
-- `before_prompt_build sessionId=...`
-- `agent_end clearing pending headers`
+- `before_prompt_build seq=... sessionId=... sessionKey=...`
+- `fetch POST applying headers seq=... target=... xSession=...`
+- `agent_end clearing pending headers seq=...`
 
 ## Validation
 
@@ -371,7 +383,7 @@ X-Turn-Type
 X-Instance-Id
 ```
 
-6. Confirm the proxy writes a trajectory for the session.
+6. Confirm the proxy writes a trace for the session.
 
 ## Troubleshooting
 
