@@ -73,7 +73,7 @@ register_provider(
         aliases=("aicoding-proxy", "rl-proxy-hermes", "hermes-rl-proxy"),
         api_mode="chat_completions",
         display_name="AI Coding Proxy for Hermes",
-        description="OpenAI-compatible AI Coding Proxy provider with RL trajectory headers.",
+        description="OpenAI-compatible AI Coding Proxy provider with RL trace headers.",
         env_vars=("HERMES_RL_PROXY_API_KEY", "HERMES_RL_PROXY_BASE_URL"),
         base_url=os.environ.get("HERMES_RL_PROXY_BASE_URL", ""),
         auth_type="api_key",

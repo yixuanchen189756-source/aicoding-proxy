@@ -1,11 +1,11 @@
-﻿# ================================================================================
-# OpenAI 鍏煎浠ｇ悊鏈嶅姟 - 閰嶇疆鏂囦欢
+# ================================================================================
+# OpenAI-compatible proxy service configuration
 # ================================================================================
 
-# 鍚庣閰嶇疆
-# key 涓哄悗绔悕绉帮紝model name 浼氫笌涔嬪尮閰?
+# Backend configuration.
+# Each key is a backend name; profiles can refer to these names.
 backends:
-  # GLM-5-FP8 妯″瀷鍚庣 (10.31.6.8)
+  # MiniMax backend.
   glm-5-fp8:
     base_url: "https://api.minimaxi.com/anthropic"
     api_key: null
@@ -21,9 +21,7 @@ backends:
     max_concurrent: 0
     requests_per_minute: 0
 
-
-
-  # GLM-5-FP8 妯″瀷鍚庣 (10.31.6.6)
+  # GLM backend.
   GLM-5-FP8:
     base_url: "https://ark.cn-beijing.volces.com/api/coding"
     api_key: "${ARK_API_KEY}"
@@ -37,9 +35,7 @@ backends:
     max_concurrent: 0
     requests_per_minute: 0
 
-
-
-  # minimax2.5 妯″瀷鍚庣 (涓? + gemma4 澶囩敤 (璐熻浇鍧囪　)
+  # Kimi coding backend.
   minimax2.5:
     base_url: "https://api.kimi.com/coding/"
     api_key: "${KIMI_API_KEY}"
@@ -52,15 +48,14 @@ backends:
         openai_url: "https://api.kimi.com/coding/"
         extra_headers:
           User-Agent: "claude-code/2.1.888"
-    load_balance: "least_connections"  # 鎸夎繛鎺ユ暟閫夋嫨锛岃嚜鍔ㄥ垏鎹㈠埌璐熻浇浣庣殑绔偣
+    load_balance: "least_connections"  # Prefer the endpoint with the fewest active connections.
     max_concurrent: 0
     requests_per_minute: 0
 
-
-# 榛樿鍚庣
+# Default backend.
 default_backend: "glm-5-fp8"
 
-# Coding agent listener profiles
+# Coding agent listener profiles.
 profiles:
   opencode:
     port: 8905
@@ -93,18 +88,18 @@ openclaw:
   backend: "GLM-5-FP8"
   session_dir: "traces/openclaw"
 
-# 璁よ瘉閰嶇疆
+# Authentication configuration.
 auth:
   enabled: false
   keys: []
   keys_file: null
 
-# 鐩戞帶閰嶇疆
+# Metrics configuration.
 metrics:
   enabled: true
   path: "/metrics"
 
-# 浠ｇ悊閰嶇疆
+# Shared proxy defaults.
 proxy:
   port: 8905
   connect_timeout_s: 10

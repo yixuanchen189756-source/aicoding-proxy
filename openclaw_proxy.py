@@ -40,7 +40,7 @@ print(response.choices[0].message.content)
 - VLLM_BASE_URL: vLLM后端地址（必须显式配置，或由 config.yaml 的 openclaw.backend 指定）
 - OPENAI_PROXY_PORT: 本服务端口（默认 8081）
 - OPENAI_PROXY_TRACE=1: 将 /v1/chat/completions 的用户输入与上游响应摘要打印到 stderr
-- OPENAI_PROXY_SESSION_FOLDER: trajectory root; files are saved as {session_id}/task_{i}.json
+- OPENAI_PROXY_SESSION_FOLDER: trace root; files are saved as {session_id}/task_{i}.json
 ================================================================================
 """
 
@@ -63,10 +63,6 @@ import aiohttp  # 异步HTTP客户端
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 import uvicorn
-
-# [DISABLED] 实例注册表模块（暂时禁用，从未在通知流程中使用）
-# from instance_registry import get_registry, InstanceConfig
-
 
 # ================================================================================
 # 配置常量
@@ -403,7 +399,7 @@ DEBUG_PROXY = os.getenv("OPENAI_PROXY_DEBUG", "").strip().lower() in {
     "on",
 }
 
-# 轨迹：打印请求/响应格式 + 按 x-session-id 写 JSON（仅 session_id、messages、tools）
+# trace：打印请求/响应格式 + 按 x-session-id 写 JSON（仅 session_id、messages、tools）
 TRACE_CONTENT = os.getenv("OPENAI_PROXY_TRACE", "").strip().lower() in {
     "1",
     "true",
@@ -418,9 +414,6 @@ SESSION_FOLDER = (
     ).strip()
     or os.getcwd()
 )
-
-# 轨迹文件计数器（在启动时初始化为现有 json 文件数量）
-_trajectory_counter: int = 0
 
 def _redact_secret(value: str, *, keep_start: int = 6, keep_end: int = 4) -> str:
     """
@@ -1243,8 +1236,8 @@ def _build_chat_request_trace(body: bytes) -> dict[str, Any]:
 _session: Optional[aiohttp.ClientSession] = None
 
 # 按 session 保存 {session_id, messages, tools}（同 id 覆盖）+ 异步队列持久化
-_trajectories_lock: Optional[asyncio.Lock] = None
-_trajectories: dict[str, dict[str, Any]] = {}
+_trace_store_lock: Optional[asyncio.Lock] = None
+_trace_store: dict[str, dict[str, Any]] = {}
 _trace_queue: Optional[asyncio.Queue] = None
 _trace_worker_task: Optional[asyncio.Task] = None
 
@@ -1379,30 +1372,28 @@ def _resolve_gateway_for_request(
 
 async def _persist_session_json() -> None:
     """
-    将轨迹保存到 SESSION_FOLDER/{session_id}/task_{i}.json
+    将trace保存到 SESSION_FOLDER/{session_id}/task_{i}.json
     同时清理已保存实例的 _task_start_index 条目，避免内存泄漏。
     """
-    global _trajectory_counter
-
-    if not SESSION_FOLDER or _trajectories_lock is None:
+    if not SESSION_FOLDER or _trace_store_lock is None:
         return
 
-    async with _trajectories_lock:
-        # 获取当前所有轨迹
-        trajectories = dict(_trajectories)
+    async with _trace_store_lock:
+        # 获取当前所有trace
+        traces = dict(_trace_store)
 
-    if not trajectories:
+    if not traces:
         return
 
     # 记录已保存的 state_key，用于后续清理
     saved_keys: list[str] = []
 
-    # 为每个 session 生成一个独立的轨迹文件
-    for state_key, trajectory in trajectories.items():
-        session_id = str(trajectory.get("session_id") or state_key or "__no_session_id__")
-        task_index = int(trajectory.get("task_index") or 1)
+    # 为每个 session 生成一个独立的trace文件
+    for state_key, trace in traces.items():
+        session_id = str(trace.get("session_id") or state_key or "__no_session_id__")
+        task_index = int(trace.get("task_index") or 1)
 
-        # 从轨迹中获取 session_id / task_index
+        # 从trace中获取 session_id / task_index
         session_dir = Path(SESSION_FOLDER) / _safe_filename(session_id)
         filepath = session_dir / f"task_{task_index}.json"
         filename = str(filepath)
@@ -1411,16 +1402,16 @@ async def _persist_session_json() -> None:
         def _write() -> None:
             filepath.parent.mkdir(parents=True, exist_ok=True)
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(trajectory, f, ensure_ascii=False, indent=2)
+                json.dump(trace, f, ensure_ascii=False, indent=2)
             tmp.replace(filepath)
 
         await asyncio.to_thread(_write)
-        print(f"[trace] 已保存轨迹到 {filename}, state_key={state_key}", file=sys.stderr, flush=True)
+        print(f"[trace] 已保存trace到 {filename}, state_key={state_key}", file=sys.stderr, flush=True)
         saved_keys.append(state_key)
 
-    # 清空轨迹（因为已经保存到文件）
-    async with _trajectories_lock:
-        _trajectories.clear()
+    # 清空trace（因为已经保存到文件）
+    async with _trace_store_lock:
+        _trace_store.clear()
 
     # ✅ 保留 _task_start_index 条目
     # 任务完成时已更新 start_index 为下一任务的起点，
@@ -1452,7 +1443,7 @@ def _enqueue_persist() -> None:
 def _assistant_message_from_response_summary(
     response_summary: dict[str, Any],
 ) -> dict[str, Any]:
-    """从轨迹用的 response 摘要构造一条 assistant 消息（仅 content，与 OpenAI 兼容）。"""
+    """从trace用的 response 摘要构造一条 assistant 消息（仅 content，与 OpenAI 兼容）。"""
     mode = str(response_summary.get("mode", ""))
     status = int(response_summary.get("http_status") or 0)
     if status >= 400 or "error" in mode:
@@ -1527,7 +1518,7 @@ def _request_trace_with_merged_assistant(
     request_summary: dict[str, Any],
     response_summary: dict[str, Any],
 ) -> dict[str, Any]:
-    """在 request 轨迹副本的 messages 末尾追加本轮 assistant 回复，不再单独存 response。"""
+    """在 request trace副本的 messages 末尾追加本轮 assistant 回复，不再单独存 response。"""
     out = copy.deepcopy(request_summary)
     msgs = out.get("messages")
     if not isinstance(msgs, list):
@@ -1538,7 +1529,7 @@ def _request_trace_with_merged_assistant(
 
 
 def _strip_ids_from_tool_calls(messages: list[Any]) -> list[Any]:
-    """轨迹落盘前移除每条 message.tool_calls[*].id。"""
+    """trace落盘前移除每条 message.tool_calls[*].id。"""
     out: list[Any] = []
     for m in messages:
         if not isinstance(m, dict):
@@ -1560,7 +1551,7 @@ async def _overwrite_session_trace(
     response_summary: dict[str, Any],
 ) -> None:
     """同一 x-session-id 只保留最新一轮；落盘仅含 session_id、messages、tools。"""
-    if not SESSION_FOLDER or _trajectories_lock is None:
+    if not SESSION_FOLDER or _trace_store_lock is None:
         return
     merged = _request_trace_with_merged_assistant(request_summary, response_summary)
     raw_msgs = merged.get("messages")
@@ -1570,8 +1561,8 @@ async def _overwrite_session_trace(
     tools = merged.get("tools")
     if tools is not None and not isinstance(tools, list):
         tools = None
-    async with _trajectories_lock:
-        _trajectories[session_id] = {
+    async with _trace_store_lock:
+        _trace_store[session_id] = {
             "session_id": session_id,
             "messages": msgs,
             "tools": tools,
@@ -1696,9 +1687,9 @@ async def _accumulate_session_trace(
     print(f"[accumulate][{session_id}] === 开始处理, elapsed=0.000ms", file=sys.stderr, flush=True)
 
     # 使用组合键区分不同实例
-    if not SESSION_FOLDER or _trajectories_lock is None:
+    if not SESSION_FOLDER or _trace_store_lock is None:
         elapsed = (time.perf_counter() - t0) * 1000
-        print(f"[accumulate][{session_id}] ❌ 提前返回！SESSION_FOLDER 或 _trajectories_lock 为空, elapsed={elapsed:.2f}ms", file=sys.stderr, flush=True)
+        print(f"[accumulate][{session_id}] ❌ 提前返回！SESSION_FOLDER 或 _trace_store_lock 为空, elapsed={elapsed:.2f}ms", file=sys.stderr, flush=True)
         return
 
     # ✅ 检测是否是 /clear-memory 内部轮次（整轮跳过）
@@ -1755,8 +1746,8 @@ async def _accumulate_session_trace(
     # Always persist the latest user-visible turn snapshot. Task completion only
     # controls task-boundary advancement and OpenClaw cleanup notification.
     t_snapshot = time.perf_counter()
-    async with _trajectories_lock:
-        _trajectories[state_key] = {
+    async with _trace_store_lock:
+        _trace_store[state_key] = {
             "session_id": session_id,
             "instance_id": instance_id,
             "task_index": task_index,
@@ -1765,7 +1756,7 @@ async def _accumulate_session_trace(
         }
         _enqueue_persist()
     snapshot_elapsed = (time.perf_counter() - t_snapshot) * 1000
-    print(f"[accumulate][{session_id}] 已保存当前轨迹快照 task_{task_index}.json，保存耗时={snapshot_elapsed:.2f}ms", file=sys.stderr, flush=True)
+    print(f"[accumulate][{session_id}] 已保存当前trace快照 task_{task_index}.json，保存耗时={snapshot_elapsed:.2f}ms", file=sys.stderr, flush=True)
 
     # ✅ 检测任务完成（TodoWrite 检查 + LLM 判断）
     t4 = time.perf_counter()
@@ -1784,7 +1775,7 @@ async def _accumulate_session_trace(
     if task_completed:
         # ✅ 任务完成，更新任务边界
         t6 = time.perf_counter()
-        async with _trajectories_lock:
+        async with _trace_store_lock:
             # ✅ 更新任务起始索引
             # req_messages 是请求带来的消息，本轮还追加了1条 assistant 响应
             # 下一个任务应从 assistant 响应之后开始，所以 +1
@@ -1794,7 +1785,7 @@ async def _accumulate_session_trace(
             _task_start_index[state_key] = new_start
             _task_file_index[state_key] = task_index + 1
         save_elapsed = (time.perf_counter() - t6) * 1000
-        print(f"[accumulate][{session_id}] 任务完成，更新起始索引到: {new_start}, 下一轨迹=task_{task_index + 1}.json, 耗时={save_elapsed:.2f}ms", file=sys.stderr, flush=True)
+        print(f"[accumulate][{session_id}] 任务完成，更新起始索引到: {new_start}, 下一trace=task_{task_index + 1}.json, 耗时={save_elapsed:.2f}ms", file=sys.stderr, flush=True)
 
         # 发送通知
         print(f"[accumulate][{session_id}] 准备调用 _notify_gateway_task_done, gateway_url={gateway_url}, instance_id={instance_id}", file=sys.stderr, flush=True)
@@ -1834,7 +1825,7 @@ async def _startup() -> None:
     - sock_connect: socket连接超时
     - sock_read: socket读取超时（无限制）
     """
-    global _session, _trajectories_lock, _trace_queue, _trace_worker_task
+    global _session, _trace_store_lock, _trace_queue, _trace_worker_task
 
     _load_gateway_instances()
 
@@ -1848,18 +1839,14 @@ async def _startup() -> None:
 
     # 创建会话
     _session = aiohttp.ClientSession(timeout=timeout)
-    _trajectories_lock = asyncio.Lock()
+    _trace_store_lock = asyncio.Lock()
     if SESSION_FOLDER:
-        # 初始化轨迹计数器：统计现有 json 文件数量
-        global _trajectory_counter
         session_path = Path(SESSION_FOLDER)
         if session_path.exists():
-            existing_files = list(session_path.glob("*.json"))
-            _trajectory_counter = len(existing_files)
-            print(f"[trace] 发现现有轨迹文件 {_trajectory_counter} 个", file=sys.stderr, flush=True)
+            existing_files = list(session_path.glob("*/task_*.json"))
+            print(f"[trace] 发现现有 trace 文件 {len(existing_files)} 个", file=sys.stderr, flush=True)
         else:
             session_path.mkdir(parents=True, exist_ok=True)
-            _trajectory_counter = 0
 
         _trace_queue = asyncio.Queue(maxsize=512)
         _trace_worker_task = asyncio.create_task(_trace_worker())
@@ -1882,15 +1869,10 @@ async def _startup() -> None:
         )
     if SESSION_FOLDER:
         print(
-            f"[trace] OPENAI_PROXY_SESSION_FOLDER={SESSION_FOLDER} 轨迹存储到独立文件",
+            f"[trace] OPENAI_PROXY_SESSION_FOLDER={SESSION_FOLDER} trace存储到独立文件",
             file=sys.stderr,
             flush=True,
         )
-
-    # [DISABLED] 实例注册表后台 Worker（暂时禁用，从未在通知流程中使用）
-    # TODO: 如果后续需要按 instance_id 配对 Token，重新启用
-    # registry = get_registry()
-    # await registry.start()
 
 
 @app.on_event("shutdown")
@@ -1911,10 +1893,6 @@ async def _shutdown() -> None:
             pass
         _trace_worker_task = None
         await _persist_session_json()
-
-    # [DISABLED] 实例注册表后台 Worker（暂时禁用）
-    # registry = get_registry()
-    # await registry.stop()
 
     if _session is not None:
         await _session.close()
@@ -2271,13 +2249,13 @@ async def proxy_v1(path: str, request: Request) -> Response:
                 if b"[DONE]" not in raw:
                     yield b"data: [DONE]\n\n"
 
-                # ✅ 核心：解析 SSE + 触发轨迹
+                # ✅ 核心：解析 SSE + 触发trace
                 if trace_chat and (TRACE_CONTENT or SESSION_FOLDER):
                     # ⚠️ 修复：raw 为空时直接跳过，避免触发"0 个事件"警告
                     # 触发场景：HTTP 错误路径、vLLM 超时/无响应、ClientPayloadError 后 acc 仍为空
                     if len(raw) == 0:
                         print(f"[gen][{session_id}] ⚠️ raw 为空（上游无数据），跳过 SSE 解析", file=sys.stderr, flush=True)
-                        # 仍然触发轨迹，但用空摘要
+                        # 仍然触发trace，但用空摘要
                         _http_status = upstream_resp.status if upstream_resp is not None else 0
                         resp_summary: dict[str, Any] = {
                             "mode": "stream_empty",
@@ -2448,72 +2426,6 @@ async def proxy_v1(path: str, request: Request) -> Response:
 # ================================================================================
 # 实例注册接口
 # ================================================================================
-
-
-# [DISABLED] 实例注册接口（暂时禁用，从未在通知流程中使用）
-# @app.post("/register-instance")
-# async def register_instance(request: Request) -> dict[str, Any]:
-#     """
-#     注册 OpenClaw 实例的 Gateway URL 和 Token。
-#
-#     OpenClaw 可以通过此接口注册自己的 Gateway URL 和 Token，
-#     用于后续的任务完成通知。
-#
-#     请求体格式：
-#     {
-#         "instance_id": "alpha",
-#         "gateway_url": "http://YOUR_GATEWAY_HOST:PORT/v1/chat/completions",
-#         "gateway_token": "your_token_here"
-#     }
-#
-#     返回：
-#     {
-#         "success": true,
-#         "message": "Instance registered successfully"
-#     }
-#     """
-#     try:
-#         body = await request.body()
-#         data = json.loads(body.decode("utf-8"))
-#     except Exception as e:
-#         return {"success": False, "message": f"Invalid JSON: {e}"}
-#
-#     instance_id = data.get("instance_id")
-#     gateway_url = data.get("gateway_url")
-#     gateway_token = data.get("gateway_token")
-#
-#     if not instance_id:
-#         return {"success": False, "message": "Missing instance_id"}
-#
-#     if not gateway_url:
-#         return {"success": False, "message": "Missing gateway_url"}
-#
-#     if not gateway_token:
-#         return {"success": False, "message": "Missing gateway_token"}
-#
-#     registry = get_registry()
-#     success = await registry.register(instance_id, gateway_url, gateway_token)
-#
-#     if success:
-#         return {"success": True, "message": "Instance registered successfully"}
-#     else:
-#         return {"success": False, "message": "Registration failed"}
-#
-#
-# @app.get("/instances")
-# async def list_instances() -> dict[str, Any]:
-#     """
-#     列出所有已注册的实例。
-#
-#     返回：
-#     {
-#         "instances": ["alpha", "beta"],
-#         "count": 2
-#     }
-#     """
-#     registry = get_registry()
-#     instances = registry.list_instances()
-#     return {"instances": instances, "count": len(instances)}
 
 
 @app.post("/register-instance")

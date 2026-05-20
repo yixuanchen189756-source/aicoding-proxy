@@ -586,7 +586,7 @@ def _debug_print(msg: str) -> None:
 
 
 def _trace_log(label: str, payload: Any) -> None:
-    """轨迹日志"""
+    """trace日志"""
     config = get_config()
     if not config.proxy.trace:
         return
@@ -905,7 +905,7 @@ def _extract_last_user_turn(obj: dict[str, Any]) -> Optional[str]:
 
 
 def _build_chat_request_trace(body: bytes) -> dict[str, Any]:
-    """构建请求轨迹"""
+    """构建请求trace"""
     obj = _try_parse_json(body)
     if not isinstance(obj, dict):
         return {"_parse_error": True, "raw_preview": _truncate(body.decode("utf-8", errors="replace"), 2000)}
@@ -1601,9 +1601,9 @@ _load_balancers: dict[str, LoadBalancer] = {}
 # 速率限制器
 _rate_limiters: dict[str, RateLimiter] = {}
 
-# 轨迹存储
-_trajectories_lock: Optional[asyncio.Lock] = None
-_trajectories: dict[str, dict[str, Any]] = {}
+# trace存储
+_trace_store_lock: Optional[asyncio.Lock] = None
+_trace_store: dict[str, dict[str, Any]] = {}
 _trace_queue: Optional[asyncio.Queue] = None
 _trace_worker_task: Optional[asyncio.Task] = None
 _agent_session_registry_lock: Optional[asyncio.Lock] = None
@@ -1787,16 +1787,16 @@ def _enqueue_usage_persist(profile_name: str = "default") -> None:
 
 
 # ================================================================================
-# 轨迹持久化
+# trace持久化
 # ================================================================================
 
 async def _persist_session_json() -> None:
-    """持久化会话轨迹"""
+    """持久化会话trace"""
     config = get_config()
-    if not config.proxy.session_json or _trajectories_lock is None:
+    if not config.proxy.session_json or _trace_store_lock is None:
         return
-    async with _trajectories_lock:
-        snapshot = {"sessions": dict(_trajectories)}
+    async with _trace_store_lock:
+        snapshot = {"sessions": dict(_trace_store)}
     path = Path(config.proxy.session_json)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -1810,7 +1810,7 @@ async def _persist_session_json() -> None:
 
 
 async def _trace_worker() -> None:
-    """轨迹写入工作线程"""
+    """trace写入工作线程"""
     assert _trace_queue is not None
     while True:
         try:
@@ -2261,7 +2261,7 @@ def _request_trace_with_merged_assistant(
     request_summary: dict[str, Any],
     response_summary: dict[str, Any],
 ) -> dict[str, Any]:
-    """合并请求和响应轨迹"""
+    """合并请求和响应trace"""
     out = copy.deepcopy(request_summary)
     msgs = out.get("messages")
     if not isinstance(msgs, list):
@@ -2294,7 +2294,7 @@ async def _overwrite_session_trace(
     request_summary: dict[str, Any],
     response_summary: dict[str, Any],
 ) -> None:
-    """覆盖会话轨迹"""
+    """覆盖会话trace"""
     config = get_config()
     profile = config.profiles.get(profile_name)
     if profile is None or not _profile_trace_enabled(profile, config):
@@ -2439,7 +2439,7 @@ app = FastAPI(title="OpenAI-Compatible Proxy (Multi-Backend)")
 async def _startup() -> None:
     """应用启动"""
     global _sessions, _load_balancers, _rate_limiters, _valid_api_keys
-    global _trajectories_lock, _trace_queue, _trace_worker_task, _agent_session_registry_lock
+    global _trace_store_lock, _trace_queue, _trace_worker_task, _agent_session_registry_lock
     global _startup_lock, _startup_complete
 
     config = get_config()
@@ -2456,7 +2456,7 @@ async def _startup() -> None:
 async def _startup_once(config: Config) -> None:
     """Initialize shared process-wide resources once."""
     global _sessions, _load_balancers, _rate_limiters, _valid_api_keys
-    global _trajectories_lock, _trace_queue, _trace_worker_task
+    global _trace_store_lock, _trace_queue, _trace_worker_task
     global _usage_persist_queue, _usage_persist_worker
 
     profile_names = _selected_profile_names(config)
@@ -2496,8 +2496,8 @@ async def _startup_once(config: Config) -> None:
     if config.auth.enabled:
         _valid_api_keys = set(config.auth.keys)
 
-    # 初始化轨迹
-    _trajectories_lock = asyncio.Lock()
+    # 初始化trace
+    _trace_store_lock = asyncio.Lock()
     _agent_session_registry_lock = asyncio.Lock()
     if config.proxy.session_json:
         _trace_queue = asyncio.Queue(maxsize=512)
@@ -2520,7 +2520,7 @@ async def _shutdown() -> None:
         return
     _startup_complete = False
 
-    # 停止轨迹工作线程
+    # 停止trace工作线程
     if _trace_worker_task is not None:
         _trace_worker_task.cancel()
         try:
@@ -2675,7 +2675,7 @@ async def proxy_v1(path: str, request: Request) -> Response:
     # 禁用上游压缩，确保 SSE 内容可解析
     headers["Accept-Encoding"] = "identity"
 
-    # 轨迹相关
+    # trace相关
     trace_chat = path.rstrip("/").endswith("chat/completions") or path.rstrip("/") == "messages"
     trace_enabled = config.proxy.trace or _profile_trace_enabled(profile, config)
     session_context = await _resolve_session_context(profile_name, request)
@@ -2768,7 +2768,7 @@ async def proxy_v1(path: str, request: Request) -> Response:
             if config.proxy.debug:
                 _debug_print(f"using backend/endpoint API key: {_redact_secret(effective_api_key)}")
 
-        # 请求轨迹
+        # 请求trace
         request_trace: Optional[dict[str, Any]] = None
         if trace_chat and trace_enabled:
             request_trace = _build_chat_request_trace(request_body)

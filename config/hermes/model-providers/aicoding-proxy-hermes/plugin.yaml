@@ -1,5 +1,5 @@
 name: aicoding-proxy-hermes
 kind: model-provider
 version: 0.1.0
-description: OpenAI-compatible AI Coding Proxy provider with RL trajectory headers.
+description: OpenAI-compatible AI Coding Proxy provider with RL trace headers.
 author: AI Coding Proxy

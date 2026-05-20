@@ -8,8 +8,8 @@ venv/
 traces/
 usage/
 logs/
-gateway_tokens.json
 gateway_instances.json
+.sisyphus/
 *.tmp
 .env
 .env.*
