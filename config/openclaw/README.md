@@ -92,10 +92,9 @@ OPENAI_PROXY_SESSION_FOLDER
   directory.
 ```
 
-The OpenClaw proxy also persists gateway metadata near the script:
+The OpenClaw proxy also persists gateway instance metadata near the script:
 
 ```text
-gateway_tokens.json
 gateway_instances.json
 ```
 

@@ -688,19 +688,6 @@ def _get_x_gateway_url(request: Request) -> Optional[str]:
     return None
 
 
-def _get_x_gateway_port(request: Request) -> Optional[str]:
-    """
-    从请求头提取 X-Gateway-Port。
-
-    OpenClaw 可以通过此请求头告知代理它的 Gateway 端口。
-    """
-    for k, v in request.headers.items():
-        if k.lower() == "x-gateway-port":
-            s = (v or "").strip()
-            return s if s else None
-    return None
-
-
 # def _extract_raw_text_from_content(content: Any) -> str:
 #     """
 #     第一步：从 content 字段提取原始文本。
@@ -1282,51 +1269,11 @@ _new_session_clear_memory_sent: set[str] = set()
 
 
 # ================================================================================
-# Gateway Token 存储（按端口配对）
+# Gateway instance registry
 # ================================================================================
-
-GATEWAY_TOKENS_FILE = Path(__file__).parent / "gateway_tokens.json"
-_gateway_tokens: dict[str, str] = {}  # port -> token
 
 GATEWAY_INSTANCES_FILE = Path(__file__).parent / "gateway_instances.json"
 _gateway_instances: dict[str, dict[str, str]] = {}
-
-
-def _load_gateway_tokens() -> None:
-    """从文件加载 Gateway Tokens"""
-    global _gateway_tokens
-    if GATEWAY_TOKENS_FILE.exists():
-        try:
-            with open(GATEWAY_TOKENS_FILE, "r", encoding="utf-8") as f:
-                _gateway_tokens = json.load(f)
-            print(f"[gateway] 已加载 {len(_gateway_tokens)} 个端口 Token 配置", file=sys.stderr, flush=True)
-            for port, token in _gateway_tokens.items():
-                print(f"[gateway]   - 端口 {port}: {token[:10]}...", file=sys.stderr, flush=True)
-        except Exception as e:
-            print(f"[gateway] 加载 Token 失败: {e}", file=sys.stderr, flush=True)
-            _gateway_tokens = {}
-    else:
-        print(f"[gateway] Token 配置文件不存在，将创建新文件", file=sys.stderr, flush=True)
-
-
-def _save_gateway_tokens() -> None:
-    """保存 Gateway Tokens 到文件"""
-    try:
-        tmp_path = GATEWAY_TOKENS_FILE.with_suffix(".tmp")
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(_gateway_tokens, f, ensure_ascii=False, indent=2)
-        tmp_path.replace(GATEWAY_TOKENS_FILE)
-        print(f"[gateway] 已保存 {len(_gateway_tokens)} 个端口 Token 配置", file=sys.stderr, flush=True)
-    except Exception as e:
-        print(f"[gateway] 保存 Token 失败: {e}", file=sys.stderr, flush=True)
-
-
-def _get_gateway_token_by_port(port: Optional[str]) -> Optional[str]:
-    """根据端口获取 Token"""
-    if not port:
-        return None
-    port_str = str(port).strip() if port else ""
-    return _gateway_tokens.get(port_str) if port_str else None
 
 
 def _load_gateway_instances() -> None:
@@ -1376,22 +1323,6 @@ def _save_gateway_instances() -> None:
         print(f"[gateway] Failed to save gateway instances: {e}", file=sys.stderr, flush=True)
 
 
-def _register_gateway_token(port: Any, token: Any) -> bool:
-    """注册端口对应的 Token"""
-    # 转换为字符串
-    port_str = str(port).strip() if port else ""
-    token_str = str(token).strip() if token else ""
-
-    if not port_str:
-        return False
-    if not token_str:
-        return False
-    _gateway_tokens[port_str] = token_str
-    _save_gateway_tokens()
-    print(f"[gateway] 已注册端口 {port_str} 的 Token: {token_str[:10]}...", file=sys.stderr, flush=True)
-    return True
-
-
 def _register_gateway_instance(
     instance_id: Any,
     gateway_url: Any,
@@ -1432,12 +1363,10 @@ def _get_gateway_instance(instance_id: Optional[str]) -> Optional[dict[str, str]
 def _resolve_gateway_for_request(
     instance_id: Optional[str],
     gateway_url: Optional[str],
-    gateway_port: Optional[str],
 ) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """Resolve gateway URL/token for a proxied request."""
     iid = str(instance_id).strip() if instance_id else None
     url = str(gateway_url).strip() if gateway_url else None
-    port = str(gateway_port).strip() if gateway_port else None
 
     entry = _get_gateway_instance(iid)
     if entry:
@@ -1445,8 +1374,7 @@ def _resolve_gateway_for_request(
         token = entry.get("gateway_token")
         return resolved_url, token, iid
 
-    token = _get_gateway_token_by_port(port)
-    return url, token, iid
+    return url, None, iid
 
 
 async def _persist_session_json() -> None:
@@ -1664,8 +1592,9 @@ async def _notify_gateway_task_done(
 
     Args:
         session_id: 会话 ID
-        gateway_url: Gateway URL（从请求头构建）
-        gateway_port: Gateway 端口（用于查找 Token）
+        gateway_url: Gateway URL resolved from the instance registry or request headers
+        gateway_token: Gateway token resolved from the instance registry
+        instance_id: OpenClaw instance ID
         max_retries: 最大重试次数
         base_delay: 基础延迟（秒），用于指数退避
     """
@@ -1907,8 +1836,6 @@ async def _startup() -> None:
     """
     global _session, _trajectories_lock, _trace_queue, _trace_worker_task
 
-    # 加载 Gateway Tokens
-    _load_gateway_tokens()
     _load_gateway_instances()
 
     # 创建超时配置
@@ -2176,19 +2103,14 @@ async def proxy_v1(path: str, request: Request) -> Response:
     session_id = _get_x_session_id(request)
     instance_id = _get_x_instance_id(request)
     gateway_url = _get_x_gateway_url(request)
-    gateway_port = _get_x_gateway_port(request)
     gateway_url, gateway_token, resolved_instance_id = _resolve_gateway_for_request(
         instance_id,
         gateway_url,
-        gateway_port,
     )
 
     # 调试：打印提取到的请求头
-    print(f"[debug] 提取请求头: session_id={session_id}, instance_id={instance_id}, gateway_url={gateway_url}, gateway_port={gateway_port}", file=sys.stderr, flush=True)
+    print(f"[debug] 提取请求头: session_id={session_id}, instance_id={instance_id}, gateway_url={gateway_url}", file=sys.stderr, flush=True)
     print(f"[debug] resolved gateway: instance_id={resolved_instance_id}, gateway_url={gateway_url}, has_token={bool(gateway_token)}", file=sys.stderr, flush=True)
-
-    # 调试：打印当前注册的 Token
-    print(f"[debug] 当前已注册端口: {list(_gateway_tokens.keys())}", file=sys.stderr, flush=True)
 
     state_key = _make_state_key(resolved_instance_id or instance_id, session_id)
     is_clear_memory_request = _is_clear_memory_request_body(body)
@@ -2532,7 +2454,7 @@ async def proxy_v1(path: str, request: Request) -> Response:
 # @app.post("/register-instance")
 # async def register_instance(request: Request) -> dict[str, Any]:
 #     """
-#     注册 OpenClaw 实例的 Gateway Token。
+#     注册 OpenClaw 实例的 Gateway URL 和 Token。
 #
 #     OpenClaw 可以通过此接口注册自己的 Gateway URL 和 Token，
 #     用于后续的任务完成通知。
@@ -2637,66 +2559,6 @@ async def list_instances() -> dict[str, Any]:
             }
         )
     return {"instances": instances, "count": len(instances)}
-
-
-@app.post("/register-gateway-token")
-async def register_gateway_token(request: Request) -> dict[str, Any]:
-    """
-    按端口注册 Gateway Token。
-
-    OpenClaw Gateway 可以通过此接口注册端口对应的 Token。
-
-    请求体格式：
-    {
-        "port": "18790",
-        "token": "your_token_here"
-    }
-
-    返回：
-    {
-        "success": true,
-        "message": "Token registered successfully"
-    }
-    """
-    print(f"[register-gateway-token] 收到注册请求", file=sys.stderr, flush=True)
-    try:
-        body = await request.body()
-        print(f"[register-gateway-token] 请求体长度: {len(body)}", file=sys.stderr, flush=True)
-        data = json.loads(body.decode("utf-8"))
-        print(f"[register-gateway-token] 解析 JSON 成功: port={data.get('port')}, token={str(data.get('token', ''))[:10]}...", file=sys.stderr, flush=True)
-    except Exception as e:
-        print(f"[register-gateway-token] JSON 解析失败: {e}", file=sys.stderr, flush=True)
-        return {"success": False, "message": f"Invalid JSON: {e}"}
-
-    port = data.get("port")
-    token = data.get("token")
-
-    if not port:
-        return {"success": False, "message": "Missing port"}
-
-    if not token:
-        return {"success": False, "message": "Missing token"}
-
-    success = _register_gateway_token(port, token)
-
-    if success:
-        return {"success": True, "message": "Token registered successfully"}
-    else:
-        return {"success": False, "message": "Registration failed"}
-
-
-@app.get("/gateway-tokens")
-async def list_gateway_tokens() -> dict[str, Any]:
-    """
-    列出所有已注册的端口 Token。
-
-    返回：
-    {
-        "ports": ["18790", "18791"],
-        "count": 2
-    }
-    """
-    return {"ports": list(_gateway_tokens.keys()), "count": len(_gateway_tokens)}
 
 
 # ================================================================================

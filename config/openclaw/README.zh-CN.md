@@ -84,10 +84,9 @@ OPENAI_PROXY_SESSION_FOLDER
   就使用当前工作目录。
 ```
 
-OpenClaw 代理还会在脚本附近持久化 gateway metadata：
+OpenClaw 代理还会在脚本附近持久化 gateway instance metadata：
 
 ```text
-gateway_tokens.json
 gateway_instances.json
 ```
 
