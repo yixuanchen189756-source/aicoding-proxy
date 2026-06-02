@@ -95,16 +95,16 @@ PowerShell:
 $env:NO_PROXY = "<proxy-host>"
 ```
 
-For example:
+For example, replace `<proxy-host>` with the proxy host or tailnet address:
 
 ```powershell
-$env:NO_PROXY = "100.64.0.132"
+$env:NO_PROXY = "<proxy-host>"
 ```
 
 To persist it on Windows:
 
 ```powershell
-[Environment]::SetEnvironmentVariable("NO_PROXY", "100.64.0.132", "User")
+[Environment]::SetEnvironmentVariable("NO_PROXY", "<proxy-host>", "User")
 ```
 
 Without this, `curl` may work while Hermes or the OpenAI Python SDK fails with `Connection error`, because httpx can pick up system proxy settings that do not handle tailnet traffic.

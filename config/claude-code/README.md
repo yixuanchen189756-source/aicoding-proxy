@@ -28,7 +28,7 @@ Configure the Claude Code proxy endpoint in Claude settings:
 ```json
 {
   "env": {
-    "ANTHROPIC_BASE_URL": "http://100.64.0.132:8906"
+    "ANTHROPIC_BASE_URL": "http://<proxy-host>:8906"
   }
 }
 ```
@@ -83,7 +83,7 @@ Windows:
 
 ```json
 {
-  "command": "python C:\\Users\\PC-M\\.claude\\hooks\\claude_code_session_hook.py",
+  "command": "python <user-home>\\.claude\\hooks\\claude_code_session_hook.py",
   "shell": "powershell"
 }
 ```

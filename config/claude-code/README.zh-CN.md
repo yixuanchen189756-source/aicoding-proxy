@@ -101,7 +101,7 @@ Windows settings：
         "hooks": [
           {
             "type": "command",
-            "command": "python C:\\Users\\PC-M\\.claude\\hooks\\claude_code_session_hook.py",
+            "command": "python <user-home>\\.claude\\hooks\\claude_code_session_hook.py",
             "shell": "powershell"
           }
         ]

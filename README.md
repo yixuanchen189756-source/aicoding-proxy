@@ -194,7 +194,7 @@ Guide: [config/opencode/README.md](config/opencode/README.md) | [中文](config/
 
 Claude Code needs two pieces:
 
-1. wrapper scripts that set `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, `CLAUDE_CODE_RUN_ID`, and workspace metadata
+1. wrapper scripts that set `ANTHROPIC_CUSTOM_HEADERS`, `CLAUDE_CODE_RUN_ID`, and workspace metadata
 2. a session hook that reports Claude Code `session_id` events to the proxy
 
 Start Claude Code through:
@@ -207,11 +207,14 @@ config\claude-code\scripts\claude_code_rl.bat
 sh config/claude-code/scripts/claude_code_rl.sh
 ```
 
-The model endpoint is:
+Claude Code should use the bare proxy base URL:
 
 ```text
-http://<proxy-host>:8906/v1/messages
+http://<proxy-host>:8906
 ```
+
+The proxy serves Anthropic Messages at `/v1/messages`; do not add `/v1` to
+`ANTHROPIC_BASE_URL`.
 
 The hook endpoint is:
 
@@ -325,10 +328,10 @@ usage/hermes/usage.json
 Compile-check the proxy scripts:
 
 ```bash
-python -B -m py_compile proxy/agent_proxy_core.py proxy/opencode_proxy.py proxy/claude_code_proxy.py proxy/hermes_proxy.py proxy/openclaw_proxy.py
+python -B -m py_compile agent_proxy_core.py opencode_proxy.py claude_code_proxy.py hermes_proxy.py openclaw_proxy.py
 ```
 
-Run the test suite from the repository root:
+If a `tests/` directory exists in your checkout, run it from this directory:
 
 ```bash
 python -m unittest discover -s tests -v

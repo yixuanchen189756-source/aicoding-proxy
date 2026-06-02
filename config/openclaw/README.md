@@ -279,7 +279,6 @@ OPENCLAW_STATE_DIR
 OPENCLAW_GATEWAY_PORT
 OPENCLAW_GATEWAY_URL
 OPENCLAW_GATEWAY_TOKEN
-OPENCLAW_INSTANCE_ID
 OPENCLAW_WORKSPACE_DIR
 ```
 
@@ -287,14 +286,14 @@ The OpenClaw client has one source of truth for the proxy address: the active
 model provider `baseUrl` in OpenClaw's own config, for example:
 
 ```text
-models.providers.vllm.baseUrl = http://100.64.0.132:8908/v1
+models.providers.vllm.baseUrl = http://<proxy-host>:8908/v1
 ```
 
 The plugin reads the default model provider from OpenClaw state, removes the
 trailing `/v1`, and derives:
 
 ```text
-http://100.64.0.132:8908/register-instance
+http://<proxy-host>:8908/register-instance
 ```
 
 Do not configure a separate `proxyRegisterUrl`; stale values are ignored to
@@ -373,7 +372,7 @@ Registration payload shape:
 
 ```json
 {
-  "instance_id": "DESKTOP-123",
+  "instance_id": "100.64.0.70_18789",
   "gateway_url": "http://<openclaw-gateway-host>:18789/v1/chat/completions",
   "gateway_token": "<token>",
   "gateway_port": "18789",

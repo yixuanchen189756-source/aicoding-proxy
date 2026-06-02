@@ -256,20 +256,19 @@ OPENCLAW_STATE_DIR
 OPENCLAW_GATEWAY_PORT
 OPENCLAW_GATEWAY_URL
 OPENCLAW_GATEWAY_TOKEN
-OPENCLAW_INSTANCE_ID
 OPENCLAW_WORKSPACE_DIR
 ```
 
 OpenClaw 客户端侧只有一个代理地址来源：OpenClaw 自己配置里的当前默认 model provider `baseUrl`，例如：
 
 ```text
-models.providers.vllm.baseUrl = http://100.64.0.132:8908/v1
+models.providers.vllm.baseUrl = http://<proxy-host>:8908/v1
 ```
 
 插件会从 OpenClaw state 读取默认 model provider，去掉末尾的 `/v1`，自动派生：
 
 ```text
-http://100.64.0.132:8908/register-instance
+http://<proxy-host>:8908/register-instance
 ```
 
 不要再单独配置 `proxyRegisterUrl`；旧值会被忽略，避免 chat completions 和 registration 指向不同地址。
@@ -338,7 +337,7 @@ OpenClaw 在处理 `/clear-memory` 请求时可能会创建额外的内部 `open
 
 ```json
 {
-  "instance_id": "DESKTOP-123",
+  "instance_id": "100.64.0.70_18789",
   "gateway_url": "http://<openclaw-gateway-host>:18789/v1/chat/completions",
   "gateway_token": "<token>",
   "gateway_port": "18789",

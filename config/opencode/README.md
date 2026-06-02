@@ -15,9 +15,6 @@ config/opencode/
   README.md
     This setup and architecture guide.
 
-  ARCHITECTURE.md
-    Earlier migration notes. Kept as historical detail.
-
   rl-training-headers/
     index.js
       Runtime OpenCode plugin entrypoint.
@@ -135,6 +132,12 @@ Options:
 | `workspaceHeader` | `X-Agent-Workspace` | Header name for the workspace path. |
 | `debug` | `false` | When `true`, writes plugin lifecycle and hook diagnostics. |
 | `debugFile` | unset | File path for debug logs, for example `~/.config/opencode/rl-training-headers-debug.log`. |
+
+`workspace` defaults to the OpenCode plugin process working directory. If you
+run OpenCode with a separate project flag such as `opencode run --dir ...`, do
+not assume that flag changes the plugin's `process.cwd()`; set the plugin
+`workspace` option explicitly when the trace must carry a specific workspace
+path.
 
 ## Installing the Plugin
 

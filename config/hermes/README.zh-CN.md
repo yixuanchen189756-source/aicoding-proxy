@@ -98,13 +98,13 @@ $env:NO_PROXY = "<proxy-host>"
 例如：
 
 ```powershell
-$env:NO_PROXY = "100.64.0.132"
+$env:NO_PROXY = "<proxy-host>"
 ```
 
 Windows 持久化：
 
 ```powershell
-[Environment]::SetEnvironmentVariable("NO_PROXY", "100.64.0.132", "User")
+[Environment]::SetEnvironmentVariable("NO_PROXY", "<proxy-host>", "User")
 ```
 
 如果不设置这个值，可能出现 `curl` 能连通，但 Hermes 或 OpenAI Python SDK 报 `Connection error` 的情况。这通常是因为 httpx 读取了系统代理设置，而该代理不能处理 tailnet 流量。

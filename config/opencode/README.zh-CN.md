@@ -14,8 +14,6 @@ config/opencode/
     英文说明。
   README.zh-CN.md
     本中文说明。
-  docs/
-    早期迁移记录，保留为历史细节。
   rl-training-headers/
     index.js
       OpenCode 插件运行入口。
@@ -126,6 +124,11 @@ cron
 | `workspaceHeader` | `X-Agent-Workspace` | workspace 路径使用的 header 名称。 |
 | `debug` | `false` | 为 `true` 时写入插件生命周期和 hook 诊断日志。 |
 | `debugFile` | 未设置 | debug 日志文件路径，例如 `~/.config/opencode/rl-training-headers-debug.log`。 |
+
+`workspace` 默认来自 OpenCode 插件进程的工作目录。如果使用
+`opencode run --dir ...` 这类单独的项目目录参数，不要假设它一定会改变
+插件的 `process.cwd()`；当 trace 必须携带指定 workspace 路径时，请显式配置
+插件的 `workspace` 选项。
 
 ## 安装插件
 

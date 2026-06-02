@@ -188,7 +188,7 @@ http://<proxy-host>:8905/v1
 
 Claude Code 集成由两部分组成：
 
-1. wrapper 脚本设置 `ANTHROPIC_BASE_URL`、`ANTHROPIC_CUSTOM_HEADERS`、`CLAUDE_CODE_RUN_ID` 和 workspace metadata
+1. wrapper 脚本设置 `ANTHROPIC_CUSTOM_HEADERS`、`CLAUDE_CODE_RUN_ID` 和 workspace metadata
 2. session hook 把 Claude Code 的 `session_id` 事件上报给代理
 
 Claude Code 使用 Anthropic Messages 协议，base URL 应为裸代理地址：
@@ -296,13 +296,13 @@ usage/hermes/usage.json
 语法检查：
 
 ```bash
-python -m py_compile agent_proxy_core.py opencode_proxy.py claude_code_proxy.py hermes_proxy.py openclaw_proxy.py
+python -B -m py_compile agent_proxy_core.py opencode_proxy.py claude_code_proxy.py hermes_proxy.py openclaw_proxy.py
 ```
 
-查看 git 状态：
+如果你的 checkout 里存在 `tests/` 目录，可以从当前目录运行：
 
 ```bash
-git status --short
+python -m unittest discover -s tests -v
 ```
 
 ## 贡献说明
