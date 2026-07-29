@@ -1,3 +1,7 @@
+# managed-by: ocr-bot v4
+# 本文件由中央仓库 ocr-bot 自动分发和更新。如需在某仓库自定义，
+# 删除本行注释即可脱离集中管理（分发器此后不再改动该文件）。
+#
 # OpenCodeReview - Push 自动评审 workflow（分发到每个仓库使用）
 #
 # 触发时机：push 到默认分支（由分发脚本把 main 替换为各仓库实际的默认分支），
@@ -52,6 +56,18 @@ jobs:
           npm install -g "@alibaba-group/open-code-review@${OCR_CLI_VERSION}"
           ocr version
 
+      - name: Validate required secrets
+        shell: bash
+        env:
+          OCR_LLM_URL: ${{ secrets.OCR_LLM_URL }}
+          OCR_LLM_AUTH_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+        run: |
+          # 提前给出人类可读的错误，而不是让 ocr 报一串 LLM 调用失败
+          missing=0
+          [ -n "$OCR_LLM_URL" ] || { echo "::error::缺少必填 secret OCR_LLM_URL"; missing=1; }
+          [ -n "$OCR_LLM_AUTH_TOKEN" ] || { echo "::error::缺少必填 secret OCR_LLM_AUTH_TOKEN"; missing=1; }
+          [ "$missing" = "0" ] || exit 1
+
       - name: Configure OCR
         shell: bash
         env:
@@ -63,7 +79,9 @@ jobs:
           # secrets 一律通过 env 传入，不在 run 里做表达式直接插值
           ocr config set llm.url "$OCR_LLM_URL"
           ocr config set llm.auth_token "$OCR_LLM_AUTH_TOKEN"
-          ocr config set llm.model "$OCR_LLM_MODEL"
+          # MODEL 可选：为空时不写入，避免覆盖为非法空值
+          [ -n "$OCR_LLM_MODEL" ] && ocr config set llm.model "$OCR_LLM_MODEL" \
+            || echo "::warning::未设置 OCR_LLM_MODEL，将使用 ocr 默认模型"
           # llm.use_anthropic 默认是 true，OpenAI 兼容协议必须显式设为 false
           ocr config set llm.use_anthropic "${OCR_LLM_USE_ANTHROPIC:-false}"
           # 不设置 extra_body，保持模型默认行为（MiniMax-M3 默认开启思考模式）
