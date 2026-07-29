@@ -1,4 +1,4 @@
-# managed-by: ocr-bot v4
+# managed-by: ocr-bot v5
 # 本文件由中央仓库 ocr-bot 自动分发和更新。如需在某仓库自定义，
 # 删除本行注释即可脱离集中管理（分发器此后不再改动该文件）。
 #
@@ -80,8 +80,12 @@ jobs:
           ocr config set llm.url "$OCR_LLM_URL"
           ocr config set llm.auth_token "$OCR_LLM_AUTH_TOKEN"
           # MODEL 可选：为空时不写入，避免覆盖为非法空值
-          [ -n "$OCR_LLM_MODEL" ] && ocr config set llm.model "$OCR_LLM_MODEL" \
-            || echo "::warning::未设置 OCR_LLM_MODEL，将使用 ocr 默认模型"
+          # （用完整 if 而不是 A && B || C：后者会吞掉 config set 本身的失败）
+          if [ -n "$OCR_LLM_MODEL" ]; then
+            ocr config set llm.model "$OCR_LLM_MODEL"
+          else
+            echo "::warning::未设置 OCR_LLM_MODEL，将使用 ocr 默认模型"
+          fi
           # llm.use_anthropic 默认是 true，OpenAI 兼容协议必须显式设为 false
           ocr config set llm.use_anthropic "${OCR_LLM_USE_ANTHROPIC:-false}"
           # 不设置 extra_body，保持模型默认行为（MiniMax-M3 默认开启思考模式）
