@@ -1,11 +1,12 @@
-# managed-by: ocr-bot v5
+# managed-by: ocr-bot v6
 # 本文件由中央仓库 ocr-bot 自动分发和更新。如需在某仓库自定义，
 # 删除本行注释即可脱离集中管理（分发器此后不再改动该文件）。
 #
 # OpenCodeReview - Push 自动评审 workflow（分发到每个仓库使用）
 #
-# 触发时机：push 到默认分支（由分发脚本把 main 替换为各仓库实际的默认分支），
-# 或在 Actions 页面手动触发（workflow_dispatch，评审 HEAD 提交）。
+# 触发时机：任何分支的 push（不含 tag），或在 Actions 页面手动触发
+# （workflow_dispatch，评审 HEAD 提交）。注意：每次 push 一次 LLM 调用，
+# 全分支开启意味着 feature/WIP 分支的推送也会产生评审成本。
 #
 # 需要的 secrets（由中央仓库的 distribute workflow 自动写入每个仓库）：
 #   OCR_LLM_URL        - LLM API 端点（如 https://api.openai.com/v1/chat/completions）
@@ -25,7 +26,7 @@ concurrency:
 
 on:
   push:
-    branches: ["main"]
+    branches: ["**"] # 所有分支的 push 都触发评审（不含 tag）
   workflow_dispatch:
 
 permissions:
