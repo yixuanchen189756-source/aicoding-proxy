@@ -1,4 +1,4 @@
-# managed-by: ocr-bot v6
+# managed-by: ocr-bot v7
 # 本文件由中央仓库 ocr-bot 自动分发和更新。如需在某仓库自定义，
 # 删除本行注释即可脱离集中管理（分发器此后不再改动该文件）。
 #
@@ -39,7 +39,7 @@ env:
 jobs:
   code-review:
     runs-on: ubuntu-latest
-    timeout-minutes: 15 # 外部 LLM 在环路里，防止挂死拖满 360 分钟上限
+    timeout-minutes: 75 # 外部 LLM 在环路里，大 diff 评审可能超过 15 分钟；75 分钟防挂死
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
